@@ -1,0 +1,110 @@
+# Каталог эталонных скриншотов Xonsaroy Pay (черновик, разметка по визуальному осмотру).
+# page_id следует схеме из ТЗ (раздел 3). state: normal | error | loading | empty.
+# ПДн на скриншотах (номер телефона, имя) перед индексацией нужно замаскировать.
+screens:
+  - file: photo_17_2026-09-28_16-53-44.jpg
+    page_id: auth/phone
+    state: normal
+    step: 1/5
+    ocr_hint: "Telefon raqamini kiriting · Kirish yoki ro'yxatdan o'tish uchun"
+  - file: photo_22_2026-09-28_16-53-44.jpg
+    page_id: auth/phone
+    state: empty
+    step: 1/5
+    note: "Поле пустое, кнопка KEYINGI неактивна"
+  - file: photo_21_2026-09-28_16-53-44.jpg
+    page_id: auth/phone
+    state: normal
+    step: 1/5
+  - file: photo_19_2026-09-28_16-53-44.jpg
+    page_id: auth/phone
+    state: error
+    step: 1/5
+    error_text: "Ilova uchun kameradan foydalanishga ruxsat berilmagan."
+    related_scope: registration/myid
+    note: "Нет разрешения на камеру, MyID не может запуститься"
+  - file: photo_18_2026-09-28_16-53-44.jpg
+    page_id: auth/myid
+    state: loading
+    note: "Экран MyID (Xonsaroy Pay), бесконечная загрузка возможна"
+  - file: photo_20_2026-09-28_16-53-44.jpg
+    page_id: auth/otp-verify
+    state: loading
+    step: 2/5
+    ocr_hint: "SMS kod · Kirish uchun +998 .. raqamiga yuborilgan kodni kiriting"
+  - file: photo_16_2026-09-28_16-53-44.jpg
+    page_id: auth/biometric-setup
+    state: normal
+    step: 5/5
+    ocr_hint: "Barmoq izi skaneri · Blokdan chiqarish"
+  - file: photo_15_2026-09-28_16-53-44.jpg
+    page_id: home/dashboard
+    state: empty
+    note: "Нет карт: Karta qo'shing, Kartalarim: 0 ta"
+  - file: photo_14_2026-09-28_16-53-44.jpg
+    page_id: home/dashboard
+    state: normal
+    note: "Прокрутка вниз: Xon Saroy Wallet, Hisobni to'ldirish"
+  - file: photo_7_2026-09-28_16-53-44.jpg
+    page_id: home/dashboard
+    state: error
+    error_text: "To'lov vositalari yetarli emas"
+    related_scope: cards
+    note: "Нет привязанных карт / недостаточно платёжных средств"
+  - file: photo_8_2026-09-28_16-53-44.jpg
+    page_id: cards/add
+    state: normal
+    ocr_hint: "Yangi karta · Raqam · Amal qilish muddati · Qabul qilinadi: Uzcard, Humo"
+  - file: photo_5_2026-09-28_16-53-44.jpg
+    page_id: cards/add-otp
+    state: normal
+    ocr_hint: "SMS kod · Yangi karta qo'shish uchun SMS-xabardan kodni kiriting · Qayta yuborish"
+  - file: photo_6_2026-09-28_16-53-44.jpg
+    page_id: cards/add-otp
+    state: empty
+  - file: photo_4_2026-09-28_16-53-44.jpg
+    page_id: cards/balance-visibility
+    state: error
+    error_text: "Karta xavfsizlik maqsadida 1 soatga bloklangan"
+    related_scope: antifraud
+    note: "Antifraud: карта временно заблокирована. Внутренние критерии не раскрывать"
+  - file: photo_13_2026-09-28_16-53-44.jpg
+    page_id: transfers/main
+    state: normal
+    ocr_hint: "O'tkazmalar · O'zimiznikilar o'rtasida · Tanlanganlar · Pul qabul qilish"
+  - file: photo_11_2026-09-28_16-53-44.jpg
+    page_id: payments/main
+    state: normal
+    ocr_hint: "To'lov · Shartnoma raqamini kiriting · Xizmatlar uchun to'lov"
+  - file: photo_12_2026-09-28_16-53-44.jpg
+    page_id: payments/main
+    state: normal
+    note: "Tanlanganlar, Mening uyim, Xonsaroy muddatli to'lovi"
+    related_scope: apartment-debt
+  - file: photo_3_2026-09-28_16-53-44.jpg
+    page_id: payments/services
+    state: normal
+  - file: photo_2026-09-28_16-53-16.jpg
+    page_id: payments/category/mobile
+    state: normal
+    ocr_hint: "Aloqa · Beeline · Uyali aloqa · Ucell · Mobiuz · Perfectum · UzMobile"
+  - file: photo_2_2026-09-28_16-53-44.jpg
+    page_id: payments/category/mobile
+    state: normal
+  - file: photo_2026-09-28_16-52-54.jpg
+    page_id: payments/provider-form
+    state: error
+    error_text: "Ведутся профилактические работы"
+    related_scope: technical
+    note: "Провайдер (Steam) на техобслуживании"
+  - file: photo_1_2026-09-28_16-53-44.jpg
+    page_id: payments/provider-form
+    state: error
+    duplicate_of: photo_2026-09-28_16-52-54.jpg
+  - file: photo_9_2026-09-28_16-53-44.jpg
+    page_id: search
+    state: empty
+  - file: photo_10_2026-09-28_16-53-44.jpg
+    page_id: history
+    state: empty
+    ocr_hint: "Tarix · 0 so'm · Operatsiyalar yo'q"
