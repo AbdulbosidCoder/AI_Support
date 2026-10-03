@@ -1,0 +1,599 @@
+{
+  "version": 1,
+  "updated": "2026-10-03",
+  "app": "Xonsaroy Pay",
+  "description": "База знаний v1 по экранам приложения: страница, ошибка, видимый текст, объяснение и шаги решения для бота. Персональные данные на изображениях замаскированы.",
+  "sections": {
+    "registration": "Регистрация и вход",
+    "home": "Главная",
+    "cards": "Карты",
+    "transfers": "P2P-переводы",
+    "payments": "Платежи",
+    "history": "История операций"
+  },
+  "global_rules": [
+    "Не принимать и не подтверждать финансовые решения: возвраты, отмены, разблокировку, изменение лимитов и данных.",
+    "Не называть статус и сроки операции без подтверждения backend. Скриншот или слова клиента не подтверждение.",
+    "Не раскрывать правила и критерии Antifraud.",
+    "Маскировать номер карты, ПИНФЛ, баланс, SMS-коды и телефон в ответах.",
+    "Отвечать на языке клиента (узбекский латиница/кириллица, русский, английский)."
+  ],
+  "pii_reminder_ru": "Пожалуйста, не присылайте фото карты, номер карты, ПИНФЛ, SMS-коды и баланс. Если они попали на скриншот, закройте их перед отправкой.",
+  "pii_reminder_uz": "Iltimos, karta raqami, karta rasmi, JShShIR (PINFL), SMS-kod va balansni yubormang. Agar ular skrinshotda bo'lsa, yuborishdan oldin yopib qo'ying.",
+  "screens": [
+    {
+      "id": "auth_phone_empty",
+      "image": "data/screenshots/01_registration/auth_phone_empty.jpg",
+      "source_file": "photo_22_2026-09-28_16-53-44.jpg",
+      "section": "registration",
+      "page_id": "auth/phone",
+      "page_name": "Регистрация/вход, шаг 1 из 5: ввод номера телефона",
+      "state": "empty",
+      "visible_text": [
+        "XonSaroy",
+        "1–5 qadam",
+        "Telefon raqamini kiriting",
+        "Kirish yoki ro'yxatdan o'tish uchun",
+        "+998 00 000-00-00",
+        "Davom etish orqali siz foydalanuvchi shartnomasiga rozilik bildirasiz",
+        "KEYINGI"
+      ],
+      "problem": "Поле номера пустое, кнопка KEYINGI неактивна (серая).",
+      "explanation_ru": "Это первый шаг входа или регистрации. Кнопка «KEYINGI» станет активной, только когда номер введён полностью (9 цифр после +998).",
+      "fix_steps_ru": [
+        "Введите номер телефона полностью, 9 цифр после +998.",
+        "Нажмите «KEYINGI».",
+        "Если кнопка остаётся серой, проверьте, что номер введён без пропусков, и перезапустите приложение."
+      ],
+      "escalate": false
+    },
+    {
+      "id": "auth_phone_filled",
+      "image": "data/screenshots/01_registration/auth_phone_filled.jpg",
+      "source_file": "photo_17_2026-09-28_16-53-44.jpg",
+      "variants": [
+        {
+          "image": "data/screenshots/01_registration/auth_phone_filled_variant.jpg",
+          "source_file": "photo_21_2026-09-28_16-53-44.jpg",
+          "note": "тот же экран, поверх строка зарядки телефона"
+        }
+      ],
+      "section": "registration",
+      "page_id": "auth/phone",
+      "page_name": "Регистрация/вход, шаг 1 из 5: ввод номера телефона",
+      "state": "normal",
+      "visible_text": [
+        "Telefon raqamini kiriting",
+        "Kirish yoki ro'yxatdan o'tish uchun",
+        "+998 XX XXX-XX-XX (замаскировано)",
+        "KEYINGI"
+      ],
+      "problem": "Ошибки нет: номер введён, кнопка активна.",
+      "explanation_ru": "Номер введён правильно. После нажатия «KEYINGI» на этот номер придёт SMS-код.",
+      "fix_steps_ru": [
+        "Нажмите «KEYINGI» и дождитесь SMS с кодом.",
+        "Если SMS не пришло, смотрите сценарий auth_sms_code_loading."
+      ],
+      "escalate": false
+    },
+    {
+      "id": "auth_phone_error_camera_permission",
+      "image": "data/screenshots/01_registration/auth_phone_error_camera_permission.jpg",
+      "source_file": "photo_19_2026-09-28_16-53-44.jpg",
+      "section": "registration",
+      "page_id": "auth/phone",
+      "related_scope": [
+        "registration/myid"
+      ],
+      "page_name": "Регистрация/вход, шаг 1 из 5",
+      "state": "error",
+      "visible_text": [
+        "Telefon raqamini kiriting",
+        "Ilova uchun kameradan foydalanishga ruxsat berilmagan.",
+        "KEYINGI"
+      ],
+      "error_text": "Ilova uchun kameradan foydalanishga ruxsat berilmagan.",
+      "problem": "Приложению не выдано разрешение на камеру, поэтому идентификация через MyID (селфи) не может запуститься.",
+      "explanation_ru": "Ошибка значит «Приложению не разрешено использовать камеру». Камера нужна для идентификации через MyID.",
+      "fix_steps_ru": [
+        "Откройте Настройки телефона → Приложения → Xonsaroy Pay → Разрешения.",
+        "Разрешите доступ к «Камере».",
+        "Вернитесь в приложение и повторите шаг.",
+        "Если ошибка повторяется, полностью закройте и снова откройте приложение."
+      ],
+      "answer_uz": "Ilovaga kameradan foydalanishga ruxsat berilmagan. Telefon Sozlamalari → Ilovalar → Xonsaroy Pay → Ruxsatlar bo'limida «Kamera»ga ruxsat bering va qadamni qaytadan bajaring.",
+      "escalate": false,
+      "escalate_if": "Разрешение выдано, а ошибка остаётся."
+    },
+    {
+      "id": "auth_myid_loading",
+      "image": "data/screenshots/01_registration/auth_myid_loading.jpg",
+      "source_file": "photo_18_2026-09-28_16-53-44.jpg",
+      "section": "registration",
+      "page_id": "auth/myid",
+      "page_name": "Идентификация MyID",
+      "state": "loading",
+      "visible_text": [
+        "Xonsaroy Pay",
+        "MyID safe identification"
+      ],
+      "problem": "Экран MyID с индикатором загрузки. Нормально, если длится несколько секунд; проблема, если загрузка бесконечная.",
+      "explanation_ru": "Это экран идентификации MyID. Он открывается, проверяет камеру и соединение.",
+      "fix_steps_ru": [
+        "Подождите немного, не закрывая экран.",
+        "Проверьте интернет (Wi-Fi или мобильные данные), отключите VPN.",
+        "Проверьте, что приложению разрешён доступ к камере.",
+        "Если загрузка бесконечная: нажмите «назад», закройте приложение и попробуйте снова."
+      ],
+      "escalate": false,
+      "escalate_if": "Загрузка бесконечная после перезапуска и смены сети."
+    },
+    {
+      "id": "auth_sms_code_loading",
+      "image": "data/screenshots/01_registration/auth_sms_code_loading.jpg",
+      "source_file": "photo_20_2026-09-28_16-53-44.jpg",
+      "section": "registration",
+      "page_id": "auth/otp-verify",
+      "page_name": "Регистрация/вход, шаг 2 из 5: SMS-код",
+      "state": "loading",
+      "visible_text": [
+        "2–5 qadam",
+        "SMS kod",
+        "Kirish uchun +998 XX XXX-XX-XX raqamiga yuborilgan kodni kiriting"
+      ],
+      "problem": "Код введён (6 символов, могут быть буквы и цифры), идёт проверка.",
+      "explanation_ru": "Приложение проверяет код из SMS. Код состоит из 6 символов и может содержать латинские буквы.",
+      "fix_steps_ru": [
+        "Дождитесь окончания проверки.",
+        "Если код не подошёл, проверьте буквы и цифры (например, 0 и O) и введите заново.",
+        "Если SMS не пришло, дождитесь окончания таймера и запросите код повторно.",
+        "Проверьте, что номер на экране ваш."
+      ],
+      "escalate": false,
+      "escalate_if": "SMS не приходит после нескольких повторных запросов.",
+      "pii_on_screen": [
+        "номер телефона",
+        "SMS-код"
+      ]
+    },
+    {
+      "id": "auth_fingerprint_setup",
+      "image": "data/screenshots/01_registration/auth_fingerprint_setup.jpg",
+      "source_file": "photo_16_2026-09-28_16-53-44.jpg",
+      "section": "registration",
+      "page_id": "auth/biometric-setup",
+      "page_name": "Регистрация, шаг 5 из 5: отпечаток пальца",
+      "state": "normal",
+      "visible_text": [
+        "5–5 qadam",
+        "Barmoq izi skaneri",
+        "Paroldan tezroq va xavfsizroq",
+        "Blokdan chiqarish",
+        "Ilovaga barmoq izi yordamida kirish",
+        "TAYYOR"
+      ],
+      "problem": "Ошибки нет. Последний шаг: включить вход по отпечатку пальца.",
+      "explanation_ru": "Здесь можно включить вход в приложение по отпечатку пальца. «Blokdan chiqarish» тут значит «разблокировка приложения» отпечатком, а не снятие блокировки аккаунта.",
+      "fix_steps_ru": [
+        "Включите или выключите переключатель по желанию.",
+        "Нажмите «TAYYOR»."
+      ],
+      "escalate": false
+    },
+    {
+      "id": "home_no_cards",
+      "image": "data/screenshots/02_home/home_no_cards.jpg",
+      "source_file": "photo_15_2026-09-28_16-53-44.jpg",
+      "section": "home",
+      "page_id": "home/dashboard",
+      "page_name": "Главная (Asosiy), нет карт",
+      "state": "empty",
+      "visible_text": [
+        "Karta qo'shing",
+        "Boshlash uchun karta qo'shing",
+        "Kartalarim: 0 ta",
+        "Kartalarim",
+        "Xon pay",
+        "QR to'lov",
+        "Tezkor o'tkazmalar",
+        "Mening uyim",
+        "Uy qo'shing va xizmatlarni kuzating",
+        "Xon Saroy Wallet (Скоро)",
+        "Asosiy · O'tkazmalar · To'lov · Tarix"
+      ],
+      "problem": "К аккаунту не привязана ни одна карта.",
+      "explanation_ru": "Регистрация завершена, но карт пока нет. Без карты нельзя платить и переводить.",
+      "fix_steps_ru": [
+        "Нажмите «Karta qo'shing» или «Kartalarim».",
+        "Введите номер карты Uzcard или Humo и срок действия.",
+        "Подтвердите кодом из SMS."
+      ],
+      "escalate": false,
+      "pii_on_screen": [
+        "имя клиента"
+      ]
+    },
+    {
+      "id": "home_scrolled",
+      "image": "data/screenshots/02_home/home_scrolled.jpg",
+      "source_file": "photo_14_2026-09-28_16-53-44.jpg",
+      "section": "home",
+      "page_id": "home/dashboard",
+      "page_name": "Главная (Asosiy), прокрутка вниз",
+      "state": "normal",
+      "visible_text": [
+        "Tezkor o'tkazmalar",
+        "Mening uyim",
+        "Xon Saroy Wallet (Скоро)",
+        "Kartalarim · Qo'shish",
+        "Hisobni to'ldirish",
+        "+998 Telefon raqami",
+        "0 so'm · Sentabrdagi xarajatlar"
+      ],
+      "problem": "Ошибки нет.",
+      "explanation_ru": "Нижняя часть главной: быстрые переводы, «Mening uyim», пополнение баланса телефона («Hisobni to'ldirish») и расходы за месяц. Xon Saroy Wallet пока недоступен (помечен «Скоро»).",
+      "fix_steps_ru": [
+        "Для пополнения телефона введите номер в «Hisobni to'ldirish».",
+        "Для расходов нажмите на блок «Sentabrdagi xarajatlar»."
+      ],
+      "escalate": false
+    },
+    {
+      "id": "home_error_no_payment_methods",
+      "image": "data/screenshots/02_home/home_error_no_payment_methods.jpg",
+      "source_file": "photo_7_2026-09-28_16-53-44.jpg",
+      "section": "home",
+      "page_id": "home/dashboard",
+      "related_scope": [
+        "cards"
+      ],
+      "page_name": "Главная (Asosiy)",
+      "state": "error",
+      "visible_text": [
+        "Karta qo'shing",
+        "Kartalarim: 0 ta",
+        "To'lov vositalari yetarli emas"
+      ],
+      "error_text": "To'lov vositalari yetarli emas",
+      "problem": "Клиент пытается совершить операцию, но к аккаунту не привязано ни одной карты (Kartalarim: 0 ta).",
+      "explanation_ru": "Сообщение значит «Недостаточно платёжных средств». На этом экране видно, что карт 0, поэтому операцию не с чего оплатить.",
+      "fix_steps_ru": [
+        "Добавьте карту Uzcard или Humo: «Kartalarim» → «Qo'shish».",
+        "Подтвердите добавление кодом из SMS.",
+        "Повторите операцию."
+      ],
+      "answer_uz": "«To'lov vositalari yetarli emas» xabari hisobingizga karta qo'shilmaganini bildiradi (Kartalarim: 0 ta). «Kartalarim» → «Qo'shish» orqali Uzcard yoki Humo kartasini qo'shing va operatsiyani qaytadan bajaring.",
+      "escalate": false,
+      "escalate_if": "Карта уже добавлена, а сообщение появляется."
+    },
+    {
+      "id": "card_add_form",
+      "image": "data/screenshots/03_cards/card_add_form.jpg",
+      "source_file": "photo_8_2026-09-28_16-53-44.jpg",
+      "section": "cards",
+      "page_id": "cards/add",
+      "page_name": "Добавление карты (Yangi karta)",
+      "state": "normal",
+      "visible_text": [
+        "Yangi karta",
+        "Raqam: 0000 0000 0000 0000",
+        "Amal qilish muddati: OO/YY",
+        "Qabul qilinadi: Uzcard, Humo",
+        "Nomi: Ixtiyoriy",
+        "Maydonni bo'sh qoldiring va kartaga kartani chiqargan bank nomi beriladi.",
+        "QO'SHISH"
+      ],
+      "problem": "Ошибки нет. Форма добавления карты.",
+      "explanation_ru": "Принимаются только карты Uzcard и Humo. Название карты необязательно: если поле пустое, карте дадут имя банка.",
+      "fix_steps_ru": [
+        "Введите 16 цифр номера карты (или отсканируйте значком справа).",
+        "Введите срок действия в формате ММ/ГГ.",
+        "Нажмите «QO'SHISH» и введите код из SMS."
+      ],
+      "escalate": false
+    },
+    {
+      "id": "card_add_sms_code_empty",
+      "image": "data/screenshots/03_cards/card_add_sms_code_empty.jpg",
+      "source_file": "photo_6_2026-09-28_16-53-44.jpg",
+      "section": "cards",
+      "page_id": "cards/add-otp",
+      "page_name": "Добавление карты: SMS-код",
+      "state": "empty",
+      "visible_text": [
+        "SMS kod",
+        "Yangi karta qo'shish uchun SMS-xabardan kodni kiriting",
+        "Qayta yuborish 00:58"
+      ],
+      "problem": "Ожидание SMS-кода для привязки карты.",
+      "explanation_ru": "Код приходит на номер, к которому подключено SMS-информирование карты в банке, а не обязательно на номер в приложении.",
+      "fix_steps_ru": [
+        "Дождитесь SMS и введите 6 цифр.",
+        "Если SMS нет, дождитесь окончания таймера и нажмите «Qayta yuborish».",
+        "Если SMS всё равно нет, проверьте в банке, к какому номеру подключено SMS-информирование карты."
+      ],
+      "escalate": false,
+      "escalate_if": "SMS-информирование подключено к правильному номеру, а код не приходит."
+    },
+    {
+      "id": "card_add_sms_code_partial",
+      "image": "data/screenshots/03_cards/card_add_sms_code_partial.jpg",
+      "source_file": "photo_5_2026-09-28_16-53-44.jpg",
+      "section": "cards",
+      "page_id": "cards/add-otp",
+      "page_name": "Добавление карты: SMS-код",
+      "state": "normal",
+      "visible_text": [
+        "SMS kod",
+        "Yangi karta qo'shish uchun SMS-xabardan kodni kiriting",
+        "Qayta yuborish 00:47"
+      ],
+      "problem": "Код вводится (часть цифр введена).",
+      "explanation_ru": "Нужно ввести все 6 цифр кода из SMS.",
+      "fix_steps_ru": [
+        "Введите оставшиеся цифры кода.",
+        "Если код истёк, нажмите «Qayta yuborish» после таймера."
+      ],
+      "escalate": false,
+      "pii_on_screen": [
+        "SMS-код"
+      ]
+    },
+    {
+      "id": "card_blocked_security_1h",
+      "image": "data/screenshots/03_cards/card_blocked_security_1h.jpg",
+      "source_file": "photo_4_2026-09-28_16-53-44.jpg",
+      "section": "cards",
+      "page_id": "cards/balance-visibility",
+      "related_scope": [
+        "antifraud"
+      ],
+      "page_name": "Umumiy balansda ko'rsatish (карты в общем балансе)",
+      "state": "error",
+      "visible_text": [
+        "Umumiy balansda ko'rsatish",
+        "Kartalar",
+        "Hamkor Bank",
+        "Karta xavfsizlik maqsadida 1 soatga bloklangan"
+      ],
+      "error_text": "Karta xavfsizlik maqsadida 1 soatga bloklangan",
+      "problem": "Карта временно ограничена в приложении системой безопасности на 1 час.",
+      "explanation_ru": "Сообщение значит «Карта заблокирована на 1 час в целях безопасности». Это временное ограничение в приложении, срок указан самим приложением.",
+      "fix_steps_ru": [
+        "Не пытайтесь повторно добавлять карту или проводить операции по ней, пока действует ограничение.",
+        "Попробуйте снова после окончания срока, указанного в приложении.",
+        "Если ограничение не снялось, напишите нам, и мы передадим обращение ответственному сотруднику."
+      ],
+      "answer_uz": "Ilovada ko'rsatilganidek, karta xavfsizlik maqsadida vaqtincha cheklangan. Iltimos, cheklov muddati tugaguncha qayta urinmang. Agar keyin ham cheklov olinmasa, yozing — murojaatingizni mas'ul xodimga yuboramiz.",
+      "forbidden": [
+        "Не называть причины и критерии блокировки (Antifraud).",
+        "Не обещать разблокировку и не разблокировать.",
+        "Не называть срок от себя: только «1 soat» как написано в приложении."
+      ],
+      "escalate": true,
+      "escalate_if": "Ограничение не снялось после указанного срока или клиент просит разблокировку."
+    },
+    {
+      "id": "transfers_main",
+      "image": "data/screenshots/04_transfers/transfers_main.jpg",
+      "source_file": "photo_13_2026-09-28_16-53-44.jpg",
+      "section": "transfers",
+      "page_id": "transfers/main",
+      "page_name": "Переводы (O'tkazmalar)",
+      "state": "normal",
+      "visible_text": [
+        "O'tkazmalar",
+        "Ma'lumotlarni kiriting",
+        "Telefon yoki karta raqami",
+        "O'zingiznikilar o'rtasida · Kartalaringiz o'rtasida o'tkazma",
+        "Tanlanganlar · Tanlangan qabul qiluvchilaringiz",
+        "Pul qabul qilish · So'rov orqali pul olish"
+      ],
+      "problem": "Ошибки нет. Главный экран переводов.",
+      "explanation_ru": "Перевод можно сделать по номеру телефона или карты получателя, между своими картами, избранным получателям, или запросить деньги («Pul qabul qilish»).",
+      "fix_steps_ru": [
+        "Введите номер телефона или карты получателя (или отсканируйте карту).",
+        "Выберите карту списания, сумму и подтвердите."
+      ],
+      "escalate": false
+    },
+    {
+      "id": "payments_main_top",
+      "image": "data/screenshots/05_payments/payments_main_top.jpg",
+      "source_file": "photo_12_2026-09-28_16-53-44.jpg",
+      "section": "payments",
+      "page_id": "payments/main",
+      "related_scope": [
+        "apartment-debt"
+      ],
+      "page_name": "Платежи (To'lov), верх",
+      "state": "normal",
+      "visible_text": [
+        "To'lov",
+        "Tanlanganlar · Qo'shish",
+        "Mening uyim · Yaratish",
+        "Xonsaroy muddatli to'lovi",
+        "Shartnoma raqamini kiriting",
+        "Xonsaroydan xonadon sotib olganlar uchun",
+        "Xizmatlar uchun to'lov"
+      ],
+      "problem": "Ошибки нет.",
+      "explanation_ru": "Здесь избранные платежи, «Mening uyim» и оплата рассрочки за квартиру «Xonsaroy muddatli to'lovi» (по номеру договора, для купивших квартиру в Xonsaroy).",
+      "fix_steps_ru": [
+        "Для оплаты квартиры нажмите «Shartnoma raqamini kiriting» и введите номер договора.",
+        "Для услуг выберите категорию ниже или воспользуйтесь поиском."
+      ],
+      "escalate": false
+    },
+    {
+      "id": "payments_main_scrolled",
+      "image": "data/screenshots/05_payments/payments_main_scrolled.jpg",
+      "source_file": "photo_11_2026-09-28_16-53-44.jpg",
+      "section": "payments",
+      "page_id": "payments/main",
+      "page_name": "Платежи (To'lov), категории услуг",
+      "state": "normal",
+      "visible_text": [
+        "Aloqa",
+        "Kommunal to'lovlar",
+        "Internet va TV",
+        "Davlat xizmatlari va jarimalar",
+        "Transport va taksilar",
+        "Kreditlar va lombardlar",
+        "O'yinlar va ijtimoiy tarmoqlar",
+        "Onlayn do'konlar",
+        "Boshqalar"
+      ],
+      "problem": "Ошибки нет.",
+      "explanation_ru": "Список категорий оплаты услуг.",
+      "fix_steps_ru": [
+        "Выберите категорию, затем поставщика услуги."
+      ],
+      "escalate": false
+    },
+    {
+      "id": "services_list",
+      "image": "data/screenshots/05_payments/services_list.jpg",
+      "source_file": "photo_3_2026-09-28_16-53-44.jpg",
+      "section": "payments",
+      "page_id": "payments/services",
+      "page_name": "Услуги (Xizmatlar)",
+      "state": "normal",
+      "visible_text": [
+        "Xizmatlar",
+        "Aloqa",
+        "Kommunal to'lovlar",
+        "Internet va TV",
+        "Davlat xizmatlari va jarimalar",
+        "Transport va taksilar",
+        "Kreditlar va lombardlar",
+        "O'yinlar va ijtimoiy tarmoqlar",
+        "Onlayn do'konlar",
+        "Boshqalar"
+      ],
+      "problem": "Ошибки нет. Отдельный экран услуг (открыт с главной).",
+      "explanation_ru": "Тот же список категорий услуг, открытый с главной страницы.",
+      "fix_steps_ru": [
+        "Выберите категорию или нажмите на кнопку поиска."
+      ],
+      "escalate": false
+    },
+    {
+      "id": "category_aloqa_mobile",
+      "image": "data/screenshots/05_payments/category_aloqa_mobile.jpg",
+      "source_file": "photo_2026-09-28_16-53-16.jpg",
+      "duplicates_removed": [
+        "photo_2_2026-09-28_16-53-44.jpg"
+      ],
+      "section": "payments",
+      "page_id": "payments/category/mobile",
+      "page_name": "Категория «Aloqa» (связь)",
+      "state": "normal",
+      "visible_text": [
+        "Aloqa",
+        "Beeline",
+        "Uyali aloqa",
+        "Ucell",
+        "Mobiuz (UMS)",
+        "Perfectum",
+        "UzMobile",
+        "ShTT",
+        "Perfectum 5G SA"
+      ],
+      "problem": "Ошибки нет.",
+      "explanation_ru": "Список операторов связи. «Uyali aloqa» — общий пункт для мобильной связи.",
+      "fix_steps_ru": [
+        "Выберите оператора.",
+        "Введите номер телефона и сумму, подтвердите оплату."
+      ],
+      "escalate": false
+    },
+    {
+      "id": "provider_steam_error_maintenance",
+      "image": "data/screenshots/05_payments/provider_steam_error_maintenance.jpg",
+      "source_file": "photo_2026-09-28_16-52-54.jpg",
+      "duplicates_removed": [
+        "photo_1_2026-09-28_16-53-44.jpg"
+      ],
+      "section": "payments",
+      "page_id": "payments/provider-form",
+      "related_scope": [
+        "technical"
+      ],
+      "page_name": "Форма оплаты поставщика (Steam)",
+      "state": "error",
+      "visible_text": [
+        "Steam",
+        "Login: XXXXXXX (замаскировано)",
+        "550 000 so'm",
+        "Barcha keyingi to'lovlar uchun miqdorni belgilang...",
+        "Ведутся профилактические работы",
+        "TAYYOR"
+      ],
+      "error_text": "Ведутся профилактические работы",
+      "problem": "Поставщик услуги (здесь Steam) временно недоступен: идут профилактические работы.",
+      "explanation_ru": "Сообщение значит, что на стороне сервиса идут технические работы, и оплата этому поставщику сейчас недоступна.",
+      "fix_steps_ru": [
+        "Не повторяйте оплату много раз подряд.",
+        "Попробуйте позже.",
+        "Проверьте в «Tarix» (История), не было ли списания.",
+        "Если деньги списались, а услуга не оплачена, пришлите время операции и сумму (без номера карты), мы передадим на проверку."
+      ],
+      "answer_uz": "«Ведутся профилактические работы» — xizmat ko'rsatuvchi tomonda texnik ishlar olib borilmoqda. Iltimos, to'lovni ketma-ket takrorlamang va keyinroq urinib ko'ring. Agar mablag' yechilgan bo'lsa, «Tarix» bo'limini tekshiring va bizga operatsiya vaqti hamda summasini yozing.",
+      "forbidden": [
+        "Не называть время окончания работ.",
+        "Не подтверждать и не опровергать списание без данных backend."
+      ],
+      "escalate": false,
+      "escalate_if": "Клиент сообщает, что деньги списались."
+    },
+    {
+      "id": "search_empty",
+      "image": "data/screenshots/05_payments/search_empty.jpg",
+      "source_file": "photo_9_2026-09-28_16-53-44.jpg",
+      "section": "payments",
+      "page_id": "search",
+      "page_name": "Поиск (Qidiruv)",
+      "state": "empty",
+      "visible_text": [
+        "Qidiruv...",
+        "Xizmat ko'rsatuvchi provayder nomlari, kategoriyalar, odamlar va hatto miqdori bo'yicha qidiring"
+      ],
+      "problem": "Ошибки нет. Пустой поиск.",
+      "explanation_ru": "Поиск ищет по названиям поставщиков, категориям, людям и даже по сумме.",
+      "fix_steps_ru": [
+        "Введите название поставщика (например, Beeline) или категорию."
+      ],
+      "escalate": false
+    },
+    {
+      "id": "history_empty",
+      "image": "data/screenshots/06_history/history_empty.jpg",
+      "source_file": "photo_10_2026-09-28_16-53-44.jpg",
+      "section": "history",
+      "page_id": "history",
+      "page_name": "История (Tarix)",
+      "state": "empty",
+      "visible_text": [
+        "Tarix",
+        "Sentabr",
+        "Barcha operatsiyalar",
+        "0 so'm · Xarajatlar miqdori",
+        "Operatsiyalar yo'q",
+        "Bir nechta pul o'tkazmalari va to'lovlarni amalga oshiring"
+      ],
+      "problem": "За выбранный месяц операций нет.",
+      "explanation_ru": "История пуста за выбранный период и фильтр. Это не значит, что операций не было в другие месяцы.",
+      "fix_steps_ru": [
+        "Нажмите на месяц («Sentabr») и выберите другой период.",
+        "Проверьте фильтр «Barcha operatsiyalar».",
+        "Если вы уверены, что операция была, а её нет в истории, пришлите дату, время и сумму, мы передадим на проверку."
+      ],
+      "forbidden": [
+        "Не утверждать, что операции не было или что она успешна, по одному скриншоту клиента."
+      ],
+      "escalate": false,
+      "escalate_if": "Клиент говорит, что операция была, а в истории её нет."
+    }
+  ]
+}
