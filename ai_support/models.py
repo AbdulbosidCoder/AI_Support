@@ -46,3 +46,5 @@ class BotReply:
     # Text the client said (typed or transcribed), for the operator hand-off.
     client_text: str = ""
     guardrail_triggered: bool = False
+    # Offer the quick-question menu with this reply (greeting or a message without a problem).
+    show_menu: bool = False
