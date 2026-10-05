@@ -1,5 +1,8 @@
 """Telegram adapter. All answer logic lives in SupportEngine; this file only moves messages.
 
+Every client is registered in the user store with the language they chose on /start;
+the reply keyboard carries quick questions and settings (see ai_support/menu.py).
+
 Escalations are posted to SUPPORT_CHAT_ID. An operator answers by replying to that post,
 and the bot relays the reply to the client.
 """
@@ -11,18 +14,49 @@ import logging
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.enums import ChatAction
 from aiogram.filters import Command, CommandStart
-from aiogram.types import Message
+from aiogram.types import (
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    BotCommand,
+    KeyboardButton,
+    Message,
+    ReplyKeyboardMarkup,
+)
 
 from ..config import Settings
 from ..engine import SupportEngine
 from ..factory import build_engine
-from ..models import Audio, BotReply, Image, IncomingMessage
+from ..menu import CHANGE_LANGUAGE_LABEL, CHOOSE_LANGUAGE, LANGUAGE_CHOICES, match_menu, menu_rows
+from ..models import Audio, BotReply, Image, IncomingMessage, Lang
+from ..templates import t
+from ..users import User, UserStore
 from .media_group import MediaGroupCollector
 
 log = logging.getLogger(__name__)
 
 # Telegram bot API download limit is 20 MB; larger images are rejected before downloading.
 MAX_IMAGE_BYTES = 20 * 1024 * 1024
+CHANNEL = "telegram"
+
+
+def language_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=label, callback_data=f"lang:{lang.value}")] for lang, label in LANGUAGE_CHOICES
+    ])
+
+
+def settings_keyboard(lang: Lang) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=CHANGE_LANGUAGE_LABEL[lang], callback_data="settings:language")],
+    ])
+
+
+def main_menu(lang: Lang) -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text=label) for label in row] for row in menu_rows(lang)],
+        resize_keyboard=True, is_persistent=True,
+    )
 
 
 def message_text(message: Message) -> str:
@@ -41,9 +75,10 @@ def image_source(message: Message):
 
 
 class TelegramSupportBot:
-    def __init__(self, settings: Settings, engine: SupportEngine):
+    def __init__(self, settings: Settings, engine: SupportEngine, users: UserStore | None = None):
         self.settings = settings
         self.engine = engine
+        self.users = users or UserStore(":memory:")
         # support-chat message id -> client chat id, for operator replies.
         self._handoffs: dict[int, int] = {}
         self._albums: MediaGroupCollector[tuple[Message, Bot]] | None = None
@@ -58,20 +93,77 @@ class TelegramSupportBot:
             r.message.register(self.ignore, F.chat.id == support)
         r.message.register(self.on_start, CommandStart())
         r.message.register(self.on_operator_command, Command("operator"))
+        r.message.register(self.on_language_command, Command("language"))
         r.message.register(self.on_client_message, F.chat.type == "private")
+        r.callback_query.register(self.on_language_chosen, F.data.startswith("lang:"))
+        r.callback_query.register(self.on_change_language, F.data == "settings:language")
 
     async def ignore(self, message: Message) -> None:
         return None
 
+    def register_user(self, message: Message) -> User:
+        """Store the client (first contact) or refresh their details; keeps the chosen language."""
+        u = message.from_user
+        return self.users.touch(
+            CHANNEL, str(u.id if u else message.chat.id), str(message.chat.id),
+            username=u.username if u else None, full_name=u.full_name if u else None,
+            platform_lang=u.language_code if u else None,
+        )
+
     async def on_start(self, message: Message) -> None:
-        hint = (message.from_user.language_code or "") if message.from_user else ""
-        hint = {"ru": "здравствуйте", "en": "hello"}.get(hint, "")
-        await message.answer(self.engine.welcome(str(message.chat.id), hint))
+        user = self.register_user(message)
+        if user.language is None:
+            # First visit: greet in Uzbek, Russian and English and ask for the language.
+            await message.answer(CHOOSE_LANGUAGE, reply_markup=language_keyboard())
+            return
+        await self._send_welcome(message, user.language)
+
+    async def on_language_command(self, message: Message) -> None:
+        self.register_user(message)
+        await message.answer(CHOOSE_LANGUAGE, reply_markup=language_keyboard())
+
+    async def on_change_language(self, callback: CallbackQuery) -> None:
+        await callback.answer()
+        if callback.message is not None:
+            await callback.message.answer(CHOOSE_LANGUAGE, reply_markup=language_keyboard())
+
+    async def on_language_chosen(self, callback: CallbackQuery) -> None:
+        try:
+            lang = Lang(callback.data.split(":", 1)[1])
+        except ValueError:
+            await callback.answer()
+            return
+        user_id = str(callback.from_user.id)
+        chat = callback.message.chat if callback.message is not None else None
+        chat_id = str(chat.id) if chat else user_id
+        if self.users.get(CHANNEL, user_id) is None:
+            u = callback.from_user
+            self.users.touch(CHANNEL, user_id, chat_id, u.username, u.full_name, u.language_code)
+        self.users.set_language(CHANNEL, user_id, lang)
+        self.engine.remember_language(chat_id, lang)
+        await callback.answer(t("language_saved", lang))
+        if callback.message is not None:
+            try:
+                await callback.message.edit_reply_markup(reply_markup=None)
+            except Exception:  # message too old or already edited: the choice is saved anyway
+                pass
+            await self._send_welcome(callback.message, lang, saved=True)
+
+    async def _send_welcome(self, message: Message, lang: Lang, saved: bool = False) -> None:
+        parts = [t("language_saved", lang)] if saved else []
+        parts += [t("welcome", lang), t("menu_hint", lang)]
+        await message.answer("\n\n".join(parts), reply_markup=main_menu(lang))
 
     async def on_operator_command(self, message: Message, bot: Bot) -> None:
-        await self._deliver(message, bot, self.engine.handoff(str(message.chat.id)))
+        user = self.register_user(message)
+        await self._deliver(message, bot, self.engine.handoff(str(message.chat.id), user.lang))
 
     async def on_client_message(self, message: Message, bot: Bot) -> None:
+        user = self.register_user(message)
+        action = match_menu(message.text or "")
+        if action is not None:
+            await self._on_menu(message, bot, user, action)
+            return
         if message.media_group_id:
             if self._albums is None:
                 self._albums = MediaGroupCollector(self._on_album)
@@ -81,6 +173,17 @@ class TelegramSupportBot:
 
     async def _on_album(self, items: list[tuple[Message, Bot]]) -> None:
         await self._answer([m for m, _ in items], items[0][1])
+
+    async def _on_menu(self, message: Message, bot: Bot, user: User, action) -> None:
+        if action.kind == "operator":
+            await self._deliver(message, bot, self.engine.handoff(str(message.chat.id), user.lang))
+        elif action.kind == "settings":
+            await message.answer(t("settings", user.lang), reply_markup=settings_keyboard(user.lang))
+        else:
+            # A quick question is answered as if the client typed it, in their chosen language.
+            await bot.send_chat_action(message.chat.id, ChatAction.TYPING)
+            msg = IncomingMessage(user_id=str(message.chat.id), text=action.question.question[user.lang])
+            await self._deliver(message, bot, await self.engine.handle(msg))
 
     async def _answer(self, messages: list[Message], bot: Bot) -> None:
         """Answer one client message, or one album, as a single question."""
@@ -153,6 +256,19 @@ class TelegramSupportBot:
         return buf.read()
 
 
+# Commands shown in Telegram's "Menu" button; Uzbek is the default, ru/en follow the app language.
+COMMANDS = {
+    None: [("start", "Boshlash"), ("language", "Tilni o'zgartirish"), ("operator", "Operator bilan bog'lanish")],
+    "ru": [("start", "Начать"), ("language", "Изменить язык"), ("operator", "Связаться с оператором")],
+    "en": [("start", "Start"), ("language", "Change language"), ("operator", "Contact an operator")],
+}
+
+
+async def set_commands(bot: Bot) -> None:
+    for code, commands in COMMANDS.items():
+        await bot.set_my_commands([BotCommand(command=c, description=d) for c, d in commands], language_code=code)
+
+
 async def main() -> None:
     logging.basicConfig(level=logging.INFO)
     settings = Settings.from_env()
@@ -160,7 +276,12 @@ async def main() -> None:
         raise SystemExit("TELEGRAM_BOT_TOKEN is not set")
     bot = Bot(settings.telegram_token)
     dp = Dispatcher()
-    dp.include_router(TelegramSupportBot(settings, build_engine(settings)).router)
+    users = UserStore(settings.db_path)
+    dp.include_router(TelegramSupportBot(settings, build_engine(settings), users).router)
+    try:
+        await set_commands(bot)
+    except Exception as e:  # commands are a convenience; the bot works without them
+        log.warning("set_my_commands failed: %s", e)
     await dp.start_polling(bot)
 
 

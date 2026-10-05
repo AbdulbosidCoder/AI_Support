@@ -1,4 +1,4 @@
-"""Fixed replies used without the model: hand-off, errors, PII reminder, greetings."""
+"""Fixed replies used without the model: hand-off, errors, PII reminder, greetings, menu."""
 from __future__ import annotations
 
 from .models import Lang
@@ -9,6 +9,24 @@ _T: dict[str, dict[Lang, str]] = {
         Lang.UZ_CYRL: "Ассалому алайкум! Мен Xonsaroy Pay ёрдамчисиман. Муаммоингизни ёзинг, овозли хабар ёки илова скриншотини юборинг.",
         Lang.RU: "Здравствуйте! Я помощник Xonsaroy Pay. Опишите проблему, отправьте голосовое сообщение или скриншот приложения.",
         Lang.EN: "Hello! I am the Xonsaroy Pay assistant. Describe your problem, send a voice message or a screenshot of the app.",
+    },
+    "menu_hint": {
+        Lang.UZ_LATN: "Tez-tez beriladigan savollar uchun pastdagi menyu tugmalaridan foydalaning.",
+        Lang.UZ_CYRL: "Тез-тез бериладиган саволлар учун пастдаги меню тугмаларидан фойдаланинг.",
+        Lang.RU: "Для частых вопросов используйте кнопки меню внизу.",
+        Lang.EN: "Use the menu buttons below for common questions.",
+    },
+    "language_saved": {
+        Lang.UZ_LATN: "Til saqlandi: O'zbekcha.",
+        Lang.UZ_CYRL: "Тил сақланди: Ўзбекча.",
+        Lang.RU: "Язык сохранён: Русский.",
+        Lang.EN: "Language saved: English.",
+    },
+    "settings": {
+        Lang.UZ_LATN: "Sozlamalar. Kerakli bandni tanlang.",
+        Lang.UZ_CYRL: "Созламалар. Керакли бандни танланг.",
+        Lang.RU: "Настройки. Выберите нужный пункт.",
+        Lang.EN: "Settings. Choose an option.",
     },
     "handoff": {
         Lang.UZ_LATN: "Murojaatingiz qo'llab-quvvatlash xodimiga yuborildi. U shu chatda javob beradi.",

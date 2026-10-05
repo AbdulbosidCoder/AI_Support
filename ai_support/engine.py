@@ -49,9 +49,13 @@ class SupportEngine:
     def welcome(self, user_id: str, hint: str = "") -> str:
         return t("welcome", self._store.language(user_id) or detect_language(hint))
 
-    def handoff(self, user_id: str) -> BotReply:
-        """Client explicitly asked for a human."""
-        lang = self._store.language(user_id) or Lang.UZ_LATN
+    def remember_language(self, user_id: str, lang: Lang) -> None:
+        """The client chose a language: use it for fixed replies until their messages say otherwise."""
+        self._store.set_language(user_id, lang)
+
+    def handoff(self, user_id: str, default: Lang = Lang.UZ_LATN) -> BotReply:
+        """Client explicitly asked for a human; `default` is the client's chosen language, if known."""
+        lang = self._store.language(user_id) or default
         return BotReply(t("handoff", lang), lang, escalate=True, escalation_reason="client asked for an operator")
 
     async def handle(self, msg: IncomingMessage) -> BotReply:

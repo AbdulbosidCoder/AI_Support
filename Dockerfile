@@ -11,7 +11,8 @@ RUN pip install -r requirements.txt
 COPY ai_support ai_support
 COPY data/knowledge_base data/knowledge_base
 
-RUN useradd --create-home --uid 10001 bot
+RUN useradd --create-home --uid 10001 bot \
+    && mkdir -p data/db && chown bot:bot data/db
 USER bot
 
 CMD ["python", "-m", "ai_support"]

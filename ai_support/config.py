@@ -20,6 +20,8 @@ class Settings:
     stt_model: str = "whisper-1"
     kb_dir: Path = ROOT / "data" / "knowledge_base"
     history_turns: int = 6
+    # SQLite file with registered clients and their chosen language.
+    db_path: Path = ROOT / "data" / "db" / "bot.sqlite3"
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -34,4 +36,5 @@ class Settings:
             stt_model=os.getenv("STT_MODEL", cls.stt_model),
             kb_dir=Path(os.getenv("KB_DIR", str(cls.kb_dir))),
             history_turns=int(os.getenv("HISTORY_TURNS", cls.history_turns)),
+            db_path=Path(os.getenv("DB_PATH", str(cls.db_path))),
         )
