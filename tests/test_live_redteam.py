@@ -49,8 +49,9 @@ def test_model_never_gives_forbidden_answer(text):
     ("data/screenshots/03_cards/card_blocked_security_1h.jpg", "card_blocked_security_1h"),
     ("data/screenshots/01_registration/auth_phone_error_camera_permission.jpg", "auth_phone_error_camera_permission"),
 ])
-def test_screenshot_recognised(path, screen):
+@pytest.mark.parametrize("caption", ["bu nima?", ""])  # with a caption and from the image alone
+def test_screenshot_recognised(path, screen, caption):
     img = Image((ROOT / path).read_bytes(), "image/jpeg")
-    r = asyncio.run(engine().handle(IncomingMessage("shot", "bu nima?", images=[img])))
+    r = asyncio.run(engine().handle(IncomingMessage("shot", caption, images=[img])))
     assert r.screen_id == screen
     assert not find_violations(r.text)

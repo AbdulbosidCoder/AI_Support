@@ -17,10 +17,27 @@ from ..config import Settings
 from ..engine import SupportEngine
 from ..factory import build_engine
 from ..models import Audio, BotReply, Image, IncomingMessage
+from .media_group import MediaGroupCollector
 
 log = logging.getLogger(__name__)
 
-MAX_IMAGE_BYTES = 10 * 1024 * 1024
+# Telegram bot API download limit is 20 MB; larger images are rejected before downloading.
+MAX_IMAGE_BYTES = 20 * 1024 * 1024
+
+
+def message_text(message: Message) -> str:
+    """The client's words: text for plain messages, caption for photos/documents/voice."""
+    return (message.text or message.caption or "").strip()
+
+
+def image_source(message: Message):
+    """The downloadable image in a message (largest photo size or an image document), if any."""
+    if message.photo:
+        return message.photo[-1]
+    doc = message.document
+    if doc and (doc.mime_type or "").startswith("image/") and (doc.file_size or 0) <= MAX_IMAGE_BYTES:
+        return doc
+    return None
 
 
 class TelegramSupportBot:
@@ -29,6 +46,7 @@ class TelegramSupportBot:
         self.engine = engine
         # support-chat message id -> client chat id, for operator replies.
         self._handoffs: dict[int, int] = {}
+        self._albums: MediaGroupCollector[tuple[Message, Bot]] | None = None
         self.router = Router()
         self._register()
 
@@ -54,20 +72,49 @@ class TelegramSupportBot:
         await self._deliver(message, bot, self.engine.handoff(str(message.chat.id)))
 
     async def on_client_message(self, message: Message, bot: Bot) -> None:
-        await bot.send_chat_action(message.chat.id, ChatAction.TYPING)
-        msg = IncomingMessage(user_id=str(message.chat.id), text=message.text or message.caption or "")
-        if message.photo:
-            msg.images.append(Image(await self._download(bot, message.photo[-1]), "image/jpeg"))
-        elif message.document and (message.document.mime_type or "") in ("image/jpeg", "image/png", "image/webp"):
-            if (message.document.file_size or 0) <= MAX_IMAGE_BYTES:
-                msg.images.append(Image(await self._download(bot, message.document), message.document.mime_type))
-        elif message.voice:
-            msg.audio = Audio(await self._download(bot, message.voice), message.voice.mime_type or "audio/ogg", "voice.ogg")
-        elif message.audio:
-            msg.audio = Audio(await self._download(bot, message.audio), message.audio.mime_type or "audio/mpeg",
-                              message.audio.file_name or "audio.mp3")
+        if message.media_group_id:
+            if self._albums is None:
+                self._albums = MediaGroupCollector(self._on_album)
+            self._albums.add(message.media_group_id, (message, bot))
+            return
+        await self._answer([message], bot)
+
+    async def _on_album(self, items: list[tuple[Message, Bot]]) -> None:
+        await self._answer([m for m, _ in items], items[0][1])
+
+    async def _answer(self, messages: list[Message], bot: Bot) -> None:
+        """Answer one client message, or one album, as a single question."""
+        first = messages[0]
+        await bot.send_chat_action(first.chat.id, ChatAction.TYPING)
+        msg = await self.to_incoming(messages, bot)
         reply = await self.engine.handle(msg)
-        await self._deliver(message, bot, reply)
+        await self._deliver(first, bot, reply)
+
+    async def to_incoming(self, messages: list[Message], bot: Bot) -> IncomingMessage:
+        first = messages[0]
+        # In an album only one item usually carries the caption.
+        text = "\n".join(t for t in (message_text(m) for m in messages) if t)
+        msg = IncomingMessage(user_id=str(first.chat.id), text=text)
+        for m in messages:
+            src = image_source(m)
+            if src is not None:
+                msg.images.append(Image(await self._download(bot, src)))
+            elif m.document and (m.document.mime_type or "").startswith("image/"):
+                msg.images.append(Image(b""))  # too large to download: the engine answers "unsupported"
+        # A text question sent as a reply to the client's own earlier screenshot: include that image.
+        reply_to = first.reply_to_message
+        if not msg.images and reply_to is not None and reply_to.chat.id == first.chat.id:
+            src = image_source(reply_to)
+            if src is not None:
+                msg.images.append(Image(await self._download(bot, src)))
+                if not text:
+                    msg.text = message_text(reply_to)
+        if first.voice:
+            msg.audio = Audio(await self._download(bot, first.voice), first.voice.mime_type or "audio/ogg", "voice.ogg")
+        elif first.audio:
+            msg.audio = Audio(await self._download(bot, first.audio), first.audio.mime_type or "audio/mpeg",
+                              first.audio.file_name or "audio.mp3")
+        return msg
 
     async def _deliver(self, message: Message, bot: Bot, reply: BotReply) -> None:
         await message.answer(reply.text)

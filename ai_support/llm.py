@@ -36,10 +36,16 @@ class Turn:
 
 
 class SupportLLM(Protocol):
-    async def answer(self, history: list[Turn], text: str, images: list[Image]) -> ModelAnswer: ...
+    async def answer(self, history: list[Turn], text: str, images: list[Image], note: str = "") -> ModelAnswer: ...
 
 
-def build_user_content(text: str, images: list[Image]) -> list[dict]:
+NO_CAPTION_NOTE = (
+    "Клиент прислал изображение без подписи. Определи по самому изображению, что его беспокоит: "
+    "экран приложения и текст ошибки, или вопрос, написанный на изображении, и ответь на это."
+)
+
+
+def build_user_content(text: str, images: list[Image], note: str = "") -> list[dict]:
     content: list[dict] = []
     for img in images:
         content.append({
@@ -50,8 +56,14 @@ def build_user_content(text: str, images: list[Image]) -> list[dict]:
                 "data": base64.standard_b64encode(img.data).decode("ascii"),
             },
         })
-    body = text.strip() or "(клиент прислал только изображение без текста)"
-    content.append({"type": "text", "text": f"<client_message>\n{body}\n</client_message>"})
+    if text.strip():
+        content.append({"type": "text", "text": f"<client_message>\n{text.strip()}\n</client_message>"})
+    elif images:
+        content.append({"type": "text", "text": NO_CAPTION_NOTE})
+    if len(images) > 1:
+        content.append({"type": "text", "text": f"Изображений в сообщении: {len(images)}. Учитывай их все вместе."})
+    if note:
+        content.append({"type": "text", "text": note})
     return content
 
 
@@ -64,9 +76,9 @@ class ClaudeSupportLLM:
         self._model = model
         self._effort = effort
 
-    async def answer(self, history: list[Turn], text: str, images: list[Image]) -> ModelAnswer:
+    async def answer(self, history: list[Turn], text: str, images: list[Image], note: str = "") -> ModelAnswer:
         messages = [{"role": t.role, "content": t.text} for t in history]
-        messages.append({"role": "user", "content": build_user_content(text, images)})
+        messages.append({"role": "user", "content": build_user_content(text, images, note)})
         try:
             response = await self._client.beta.messages.create(
                 model=self._model,

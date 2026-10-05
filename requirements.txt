@@ -1,3 +1,4 @@
 anthropic>=1.11,<2
 aiogram>=3.31,<4
 httpx>=0.28,<1
+pillow>=11,<13

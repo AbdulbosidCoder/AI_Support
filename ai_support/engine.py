@@ -5,6 +5,7 @@ import logging
 from collections import defaultdict, deque
 
 from . import guardrails
+from .images import MAX_IMAGES_PER_MESSAGE, prepare_image
 from .language import detect_language
 from .llm import LLMError, ModelAnswer, SupportLLM, Turn
 from .models import BotReply, IncomingMessage, Lang
@@ -29,7 +30,7 @@ class ConversationStore:
         return turns
 
     def add(self, user_id: str, client_text: str, bot_text: str) -> None:
-        self._turns[user_id].append(Turn("user", mask_pii(client_text) or "(изображение)"))
+        self._turns[user_id].append(Turn("user", mask_pii(client_text)))
         self._turns[user_id].append(Turn("assistant", bot_text))
 
     def language(self, user_id: str) -> Lang | None:
@@ -66,7 +67,11 @@ class SupportEngine:
                 return BotReply(t("voice_unavailable", lang), lang)
             text = f"{text}\n{spoken}".strip()
 
-        if not text.strip() and not msg.images:
+        images = [img for img in (prepare_image(i.data) for i in msg.images[:MAX_IMAGES_PER_MESSAGE]) if img]
+        if msg.images and not images and not text.strip():
+            lang = known_lang or Lang.UZ_LATN
+            return BotReply(t("image_unsupported", lang), lang)
+        if not text.strip() and not images:
             lang = known_lang or Lang.UZ_LATN
             return BotReply(t("empty", lang), lang)
 
@@ -74,8 +79,10 @@ class SupportEngine:
         fallback_lang = detect_language(text, default=known_lang or Lang.UZ_LATN) if text.strip() else (known_lang or Lang.UZ_LATN)
         restricted = guardrails.restricted_request(text)
 
+        # Image without a caption: the question comes from the image; keep replying in the client's language.
+        note = "" if text.strip() else f"Язык ответа, если на изображении нет вопроса клиента: {fallback_lang.value}."
         try:
-            ans = await self._llm.answer(self._store.history(msg.user_id), text, msg.images)
+            ans = await self._llm.answer(self._store.history(msg.user_id), text, images, note)
         except LLMError as e:
             log.error("llm failed: %s", e)
             return BotReply(t("error", fallback_lang), fallback_lang, escalate=True,
@@ -83,7 +90,7 @@ class SupportEngine:
 
         reply = self._postprocess(ans, fallback_lang, restricted, text)
         self._store.set_language(msg.user_id, reply.language)
-        self._store.add(msg.user_id, text, reply.text)
+        self._store.add(msg.user_id, _history_text(text, len(images), reply.screen_id), reply.text)
         return reply
 
     def _postprocess(self, ans: ModelAnswer, fallback_lang: Lang, restricted: str | None, text: str) -> BotReply:
@@ -124,3 +131,11 @@ class SupportEngine:
             client_text=mask_pii(text),
             guardrail_triggered=guard,
         )
+
+
+def _history_text(text: str, n_images: int, screen_id: str | None) -> str:
+    """What the client sent, as text for later turns (images themselves are not resent)."""
+    if not n_images:
+        return text
+    seen = f"экран {screen_id}" if screen_id else "экран не из базы"
+    return f"{text}\n[клиент прислал изображение ({n_images} шт.), распознано: {seen}]".strip()

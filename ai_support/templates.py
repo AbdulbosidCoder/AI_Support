@@ -40,6 +40,12 @@ _T: dict[str, dict[Lang, str]] = {
         Lang.RU: "Не удалось распознать голосовое сообщение. Пожалуйста, напишите проблему текстом.",
         Lang.EN: "I couldn't recognise the voice message. Please describe the problem in text.",
     },
+    "image_unsupported": {
+        Lang.UZ_LATN: "Rasmni ochib bo'lmadi. Iltimos, skrinshotni JPG yoki PNG ko'rinishida yuboring yoki muammoni matn bilan yozing.",
+        Lang.UZ_CYRL: "Расмни очиб бўлмади. Илтимос, скриншотни JPG ёки PNG кўринишида юборинг ёки муаммони матн билан ёзинг.",
+        Lang.RU: "Не удалось открыть изображение. Пришлите скриншот в формате JPG или PNG или опишите проблему текстом.",
+        Lang.EN: "I couldn't open the image. Please send the screenshot as JPG or PNG, or describe the problem in text.",
+    },
     "empty": {
         Lang.UZ_LATN: "Muammoingizni yozing yoki ilova skrinshotini yuboring.",
         Lang.UZ_CYRL: "Муаммоингизни ёзинг ёки илова скриншотини юборинг.",
