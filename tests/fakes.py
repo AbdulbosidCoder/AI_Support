@@ -1,3 +1,7 @@
+import io
+
+from PIL import Image as PILImage
+
 from ai_support.llm import LLMError, ModelAnswer
 from ai_support.models import Audio
 from ai_support.stt import STTError
@@ -13,8 +17,8 @@ class FakeLLM:
         self.error = error
         self.calls = []
 
-    async def answer(self, history, text, images):
-        self.calls.append((list(history), text, list(images)))
+    async def answer(self, history, text, images, note=""):
+        self.calls.append((list(history), text, list(images), note))
         if self.error:
             raise LLMError(self.error)
         return self.result
@@ -28,3 +32,9 @@ class FakeSTT:
         if self.text is None:
             raise STTError("disabled")
         return self.text
+
+
+def png(size=(40, 80), color=(120, 40, 160)) -> bytes:
+    buf = io.BytesIO()
+    PILImage.new("RGB", size, color).save(buf, "PNG")
+    return buf.getvalue()

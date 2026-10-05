@@ -1,0 +1,16 @@
+services:
+  bot:
+    build: .
+    image: xonsaroy-ai-support:latest
+    container_name: xonsaroy-ai-support
+    # TELEGRAM_BOT_TOKEN, ANTHROPIC_API_KEY, SUPPORT_CHAT_ID, STT_API_KEY ... (see .env.example)
+    env_file: .env
+    restart: unless-stopped
+    volumes:
+      # Knowledge base is mounted read-only: edit the JSON files and `docker compose restart bot`, no rebuild.
+      - ./data/knowledge_base:/app/data/knowledge_base:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

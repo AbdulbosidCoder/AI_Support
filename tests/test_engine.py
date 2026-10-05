@@ -3,7 +3,7 @@ import asyncio
 from ai_support.engine import SupportEngine
 from ai_support.models import Audio, Image, IncomingMessage, Lang
 from ai_support.templates import t
-from fakes import FakeLLM, FakeSTT, answer
+from fakes import FakeLLM, FakeSTT, answer, png
 
 
 def run(engine, msg):
@@ -34,15 +34,68 @@ def test_pii_in_model_answer_is_masked():
 
 def test_pii_on_screenshot_adds_reminder():
     llm = FakeLLM(answer("Это экран добавления карты.", lang="uz_latn", pii=True, screen="card_add_form"))
-    r = run(SupportEngine(llm, FakeSTT()), IncomingMessage("1", "", images=[Image(b"x")]))
+    r = run(SupportEngine(llm, FakeSTT()), IncomingMessage("1", "", images=[Image(png())]))
     assert t("pii_reminder", Lang.UZ_LATN) in r.text
     assert r.screen_id == "card_add_form"
 
 
 def test_image_is_passed_to_model():
     llm = FakeLLM()
-    run(SupportEngine(llm, FakeSTT()), IncomingMessage("1", "что это?", images=[Image(b"img")]))
-    assert llm.calls[0][2][0].data == b"img"
+    data = png()
+    run(SupportEngine(llm, FakeSTT()), IncomingMessage("1", "что это?", images=[Image(data)]))
+    assert llm.calls[0][2][0].data == data
+    assert llm.calls[0][2][0].media_type == "image/png"
+    assert llm.calls[0][3] == ""  # caption present: no extra note
+
+
+def test_image_without_caption_is_answered_from_the_image():
+    llm = FakeLLM(answer("Это ошибка камеры.", screen="auth_phone_error_camera_permission"))
+    r = run(SupportEngine(llm, FakeSTT()), IncomingMessage("1", "", images=[Image(png())]))
+    _, text, images, note = llm.calls[0]
+    assert text == "" and len(images) == 1
+    assert "uz_latn" in note  # default reply language hint when nothing else is known
+    assert r.text == "Это ошибка камеры."
+
+
+def test_image_without_caption_keeps_previous_language():
+    llm = FakeLLM(answer("Ок", lang="ru"))
+    engine = SupportEngine(llm, FakeSTT())
+    run(engine, IncomingMessage("1", "Здравствуйте, у меня ошибка"))
+    run(engine, IncomingMessage("1", "", images=[Image(png())]))
+    assert "ru" in llm.calls[1][3]
+
+
+def test_caption_with_image_goes_as_text():
+    llm = FakeLLM()
+    run(SupportEngine(llm, FakeSTT()), IncomingMessage("1", "nega bu chiqyapti?", images=[Image(png())]))
+    assert llm.calls[0][1] == "nega bu chiqyapti?"
+
+
+def test_unreadable_image_without_text():
+    llm = FakeLLM()
+    r = run(SupportEngine(llm, FakeSTT()), IncomingMessage("1", "", images=[Image(b"not an image")]))
+    assert r.text == t("image_unsupported", Lang.UZ_LATN)
+    assert not llm.calls
+
+
+def test_unreadable_image_with_text_still_answers_text():
+    llm = FakeLLM()
+    run(SupportEngine(llm, FakeSTT()), IncomingMessage("1", "SMS kelmayapti", images=[Image(b"bad")]))
+    assert llm.calls[0][1] == "SMS kelmayapti" and llm.calls[0][2] == []
+
+
+def test_album_images_are_limited():
+    llm = FakeLLM()
+    run(SupportEngine(llm, FakeSTT()), IncomingMessage("1", "", images=[Image(png()) for _ in range(8)]))
+    assert len(llm.calls[0][2]) == 5
+
+
+def test_image_turn_is_remembered_in_history():
+    llm = FakeLLM(answer("Ок", screen="card_add_form"))
+    engine = SupportEngine(llm, FakeSTT())
+    run(engine, IncomingMessage("1", "", images=[Image(png())]))
+    run(engine, IncomingMessage("1", "а дальше?"))
+    assert "card_add_form" in llm.calls[1][0][0].text
 
 
 def test_llm_failure_hands_off():

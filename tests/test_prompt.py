@@ -41,3 +41,17 @@ def test_faq_has_no_forbidden_phrases():
     for topic in KB.topics:
         for step in topic["answer_steps"]:
             assert not find_violations(step), (topic["id"], step)
+
+
+def test_image_without_caption_asks_model_to_read_the_image():
+    from ai_support.llm import NO_CAPTION_NOTE
+    c = build_user_content("", [Image(b"abc")], note="lang hint")
+    texts = [b["text"] for b in c if b["type"] == "text"]
+    assert NO_CAPTION_NOTE in texts and "lang hint" in texts
+    assert not any("<client_message>" in x for x in texts)
+
+
+def test_several_images_are_mentioned():
+    c = build_user_content("что это", [Image(b"a"), Image(b"b")])
+    assert sum(b["type"] == "image" for b in c) == 2
+    assert any("Изображений в сообщении: 2" in b.get("text", "") for b in c)
