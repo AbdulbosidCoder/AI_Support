@@ -142,9 +142,11 @@ def test_choosing_language_saves_it_and_shows_menu():
     asyncio.run(bot.on_start(client_msg(chat, "/start")))
     asyncio.run(bot.on_language_chosen(callback(chat, "lang:ru")))
     assert users.get("telegram", "42").language == Lang.RU
-    text, kb = chat.sent[-1]
-    assert t("welcome", Lang.RU) in text and isinstance(kb, ReplyKeyboardMarkup)
+    (saved, kb), (text, mini) = chat.sent[-2:]
+    assert saved == t("language_saved", Lang.RU) and isinstance(kb, ReplyKeyboardMarkup)
     assert kb.keyboard[-1][1].text == SETTINGS_LABEL[Lang.RU]
+    assert t("welcome", Lang.RU) in text
+    assert [row[0].callback_data for row in mini.inline_keyboard] == [f"q:{q.id}" for q in QUICK_QUESTIONS]
 
 
 def test_second_start_does_not_ask_language_again():
@@ -154,6 +156,7 @@ def test_second_start_does_not_ask_language_again():
     asyncio.run(bot.on_language_chosen(callback(chat, "lang:en")))
     asyncio.run(bot.on_start(client_msg(chat, "/start")))
     assert t("welcome", Lang.EN) in chat.sent[-1][0] and users.count() == 1
+    assert CHOOSE_LANGUAGE not in [text for text, _ in chat.sent[2:]]
 
 
 def test_unknown_language_code_ignored():
@@ -210,3 +213,41 @@ def test_any_message_registers_user():
     chat = Chat()
     asyncio.run(bot.on_client_message(client_msg(chat, "Salom", uid=7), chat))
     assert users.get("telegram", "7") is not None
+
+
+def test_greeting_gets_short_question_and_mini_menu_without_model():
+    llm = FakeLLM()
+    bot, users = make_bot(llm)
+    chat = Chat()
+    asyncio.run(bot.on_client_message(client_msg(chat, "Salom"), chat))
+    text, kb = chat.sent[-1]
+    assert text.startswith(t("ask_problem", Lang.UZ_LATN)) and not llm.calls
+    assert isinstance(kb, InlineKeyboardMarkup) and kb.inline_keyboard[0][0].callback_data.startswith("q:")
+
+
+def test_mini_menu_button_asks_question_in_chosen_language():
+    llm = FakeLLM(answer("Kartalarim bo'limiga kiring.", "uz_latn", topic="add_card"))
+    bot, users = make_bot(llm)
+    chat = Chat()
+    users.touch("telegram", "42", "42")
+    users.set_language("telegram", "42", Lang.RU)
+    asyncio.run(bot.on_quick_question(callback(chat, "q:add_card"), chat))
+    assert llm.calls[0][1] == QUICK_QUESTIONS[0].question[Lang.RU]
+    assert chat.sent[-1] == ("Kartalarim bo'limiga kiring.", None)
+
+
+def test_mini_menu_forbidden_answer_replaced():
+    bot, users = make_bot(FakeLLM(answer("Перевод успешно завершён.", "ru")))
+    chat = Chat()
+    users.touch("telegram", "42", "42")
+    users.set_language("telegram", "42", Lang.RU)
+    asyncio.run(bot.on_quick_question(callback(chat, "q:transfer_not_received"), chat))
+    assert chat.sent[-1][0] == t("guardrail", Lang.RU)
+
+
+def test_unknown_quick_question_ignored():
+    llm = FakeLLM()
+    bot, _ = make_bot(llm)
+    chat = Chat()
+    asyncio.run(bot.on_quick_question(callback(chat, "q:nope"), chat))
+    assert chat.sent == [] and not llm.calls

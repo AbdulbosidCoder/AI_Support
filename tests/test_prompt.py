@@ -55,3 +55,8 @@ def test_several_images_are_mentioned():
     c = build_user_content("что это", [Image(b"a"), Image(b"b")])
     assert sum(b["type"] == "image" for b in c) == 2
     assert any("Изображений в сообщении: 2" in b.get("text", "") for b in c)
+
+
+def test_prompt_forbids_capability_list_on_greeting():
+    p = build_system_prompt(KB)
+    assert 'topic="greeting"' in p and "не перечисляй" in p

@@ -27,7 +27,9 @@ from aiogram.types import (
 from ..config import Settings
 from ..engine import SupportEngine
 from ..factory import build_engine
-from ..menu import CHANGE_LANGUAGE_LABEL, CHOOSE_LANGUAGE, LANGUAGE_CHOICES, match_menu, menu_rows
+from ..menu import (
+    CHANGE_LANGUAGE_LABEL, CHOOSE_LANGUAGE, LANGUAGE_CHOICES, QUICK_QUESTIONS, match_menu, menu_rows, quick_question,
+)
 from ..models import Audio, BotReply, Image, IncomingMessage, Lang
 from ..templates import t
 from ..users import User, UserStore
@@ -49,6 +51,13 @@ def language_keyboard() -> InlineKeyboardMarkup:
 def settings_keyboard(lang: Lang) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=CHANGE_LANGUAGE_LABEL[lang], callback_data="settings:language")],
+    ])
+
+
+def quick_keyboard(lang: Lang) -> InlineKeyboardMarkup:
+    """Mini menu under a message: the common questions, one tap each."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=q.label[lang], callback_data=f"q:{q.id}")] for q in QUICK_QUESTIONS
     ])
 
 
@@ -97,6 +106,7 @@ class TelegramSupportBot:
         r.message.register(self.on_client_message, F.chat.type == "private")
         r.callback_query.register(self.on_language_chosen, F.data.startswith("lang:"))
         r.callback_query.register(self.on_change_language, F.data == "settings:language")
+        r.callback_query.register(self.on_quick_question, F.data.startswith("q:"))
 
     async def ignore(self, message: Message) -> None:
         return None
@@ -150,9 +160,24 @@ class TelegramSupportBot:
             await self._send_welcome(callback.message, lang, saved=True)
 
     async def _send_welcome(self, message: Message, lang: Lang, saved: bool = False) -> None:
-        parts = [t("language_saved", lang)] if saved else []
-        parts += [t("welcome", lang), t("menu_hint", lang)]
-        await message.answer("\n\n".join(parts), reply_markup=main_menu(lang))
+        # The persistent keyboard comes with the first message, the mini menu with the question.
+        first = t("language_saved", lang) if saved else t("ask_problem", lang)
+        await message.answer(first, reply_markup=main_menu(lang))
+        await message.answer(f"{t('welcome', lang)}\n\n{t('menu_hint', lang)}", reply_markup=quick_keyboard(lang))
+
+    async def on_quick_question(self, callback: CallbackQuery, bot: Bot) -> None:
+        await callback.answer()
+        q = quick_question(callback.data.split(":", 1)[1])
+        if q is None or callback.message is None:
+            return
+        user = self.users.get(CHANNEL, str(callback.from_user.id))
+        lang = user.lang if user else Lang.UZ_LATN
+        chat_id = callback.message.chat.id
+        await bot.send_chat_action(chat_id, ChatAction.TYPING)
+        reply = await self.engine.handle(IncomingMessage(user_id=str(chat_id), text=q.question[lang]))
+        await callback.message.answer(reply.text, reply_markup=quick_keyboard(reply.language) if reply.show_menu else None)
+        if reply.escalate:
+            await self._escalate(callback.message, bot, reply, callback.from_user)
 
     async def on_operator_command(self, message: Message, bot: Bot) -> None:
         user = self.register_user(message)
@@ -220,16 +245,16 @@ class TelegramSupportBot:
         return msg
 
     async def _deliver(self, message: Message, bot: Bot, reply: BotReply) -> None:
-        await message.answer(reply.text)
+        await message.answer(reply.text, reply_markup=quick_keyboard(reply.language) if reply.show_menu else None)
         if reply.escalate:
             await self._escalate(message, bot, reply)
 
-    async def _escalate(self, message: Message, bot: Bot, reply: BotReply) -> None:
+    async def _escalate(self, message: Message, bot: Bot, reply: BotReply, user=None) -> None:
         chat = self.settings.support_chat_id
         if chat is None:
             log.warning("escalation without SUPPORT_CHAT_ID: chat=%s reason=%s", message.chat.id, reply.escalation_reason)
             return
-        user = message.from_user
+        user = user or message.from_user
         who = f"@{user.username}" if user and user.username else (user.full_name if user else "?")
         summary = (
             f"Эскалация от {who} (chat {message.chat.id})\n"

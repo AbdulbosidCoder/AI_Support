@@ -5,16 +5,22 @@ from .models import Lang
 
 _T: dict[str, dict[Lang, str]] = {
     "welcome": {
-        Lang.UZ_LATN: "Assalomu alaykum! Men Xonsaroy Pay yordamchisiman. Muammoingizni yozing, ovozli xabar yoki ilova skrinshotini yuboring.",
-        Lang.UZ_CYRL: "Ассалому алайкум! Мен Xonsaroy Pay ёрдамчисиман. Муаммоингизни ёзинг, овозли хабар ёки илова скриншотини юборинг.",
-        Lang.RU: "Здравствуйте! Я помощник Xonsaroy Pay. Опишите проблему, отправьте голосовое сообщение или скриншот приложения.",
-        Lang.EN: "Hello! I am the Xonsaroy Pay assistant. Describe your problem, send a voice message or a screenshot of the app.",
+        Lang.UZ_LATN: "Qanday muammo yuz berdi? Yozing, ovozli xabar yoki skrinshot yuboring.",
+        Lang.UZ_CYRL: "Қандай муаммо юз берди? Ёзинг, овозли хабар ёки скриншот юборинг.",
+        Lang.RU: "Какая у вас проблема? Напишите, отправьте голосовое или скриншот.",
+        Lang.EN: "What problem are you facing? Write it, send a voice message or a screenshot.",
+    },
+    "ask_problem": {
+        Lang.UZ_LATN: "Assalomu alaykum! Qanday muammo yuz berdi?",
+        Lang.UZ_CYRL: "Ассалому алайкум! Қандай муаммо юз берди?",
+        Lang.RU: "Здравствуйте! Какая у вас проблема?",
+        Lang.EN: "Hello! What problem are you facing?",
     },
     "menu_hint": {
-        Lang.UZ_LATN: "Tez-tez beriladigan savollar uchun pastdagi menyu tugmalaridan foydalaning.",
-        Lang.UZ_CYRL: "Тез-тез бериладиган саволлар учун пастдаги меню тугмаларидан фойдаланинг.",
-        Lang.RU: "Для частых вопросов используйте кнопки меню внизу.",
-        Lang.EN: "Use the menu buttons below for common questions.",
+        Lang.UZ_LATN: "Yoki tayyor savollardan birini tanlang:",
+        Lang.UZ_CYRL: "Ёки тайёр саволлардан бирини танланг:",
+        Lang.RU: "Или выберите готовый вопрос:",
+        Lang.EN: "Or pick a common question:",
     },
     "language_saved": {
         Lang.UZ_LATN: "Til saqlandi: O'zbekcha.",

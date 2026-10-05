@@ -42,7 +42,7 @@ def _fixed_texts():
     texts = [CHOOSE_LANGUAGE] + [label for _, label in LANGUAGE_CHOICES]
     for lang in Lang:
         texts += [OPERATOR_LABEL[lang], SETTINGS_LABEL[lang], CHANGE_LANGUAGE_LABEL[lang]]
-        texts += [t(k, lang) for k in ("welcome", "menu_hint", "language_saved", "settings")]
+        texts += [t(k, lang) for k in ("welcome", "menu_hint", "language_saved", "settings", "ask_problem")]
         for q in QUICK_QUESTIONS:
             texts += [q.label[lang], q.question[lang]]
     return texts

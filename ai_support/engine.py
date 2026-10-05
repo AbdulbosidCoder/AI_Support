@@ -6,7 +6,7 @@ from collections import defaultdict, deque
 
 from . import guardrails
 from .images import MAX_IMAGES_PER_MESSAGE, prepare_image
-from .language import detect_language
+from .language import detect_language, is_small_talk
 from .llm import LLMError, ModelAnswer, SupportLLM, Turn
 from .models import BotReply, IncomingMessage, Lang
 from .pii import mask_pii
@@ -77,7 +77,13 @@ class SupportEngine:
             return BotReply(t("image_unsupported", lang), lang)
         if not text.strip() and not images:
             lang = known_lang or Lang.UZ_LATN
-            return BotReply(t("empty", lang), lang)
+            return BotReply(t("empty", lang), lang, show_menu=True)
+
+        if not images and is_small_talk(text):
+            # A greeting or a bare "help": ask what the problem is and offer the quick questions.
+            lang = detect_language(text, default=known_lang or Lang.UZ_LATN)
+            return BotReply(f"{t('ask_problem', lang)}\n\n{t('menu_hint', lang)}", lang, topic="greeting",
+                            client_text=mask_pii(text), show_menu=True)
 
         # Language of the latest message wins; for an image without text keep the last known one.
         fallback_lang = detect_language(text, default=known_lang or Lang.UZ_LATN) if text.strip() else (known_lang or Lang.UZ_LATN)
@@ -126,6 +132,7 @@ class SupportEngine:
             answer = f"{answer}\n\n{t('pii_reminder', lang)}"
 
         return BotReply(
+            show_menu=ans.topic == "greeting" and not escalate,
             text=answer,
             language=lang,
             escalate=escalate,

@@ -105,6 +105,10 @@ def menu_rows(lang: Lang) -> list[list[str]]:
     return rows
 
 
+def quick_question(qid: str) -> QuickQuestion | None:
+    return next((q for q in QUICK_QUESTIONS if q.id == qid), None)
+
+
 def match_menu(text: str) -> MenuAction | None:
     """The menu button a text came from, in any language (an old keyboard may still be on screen)."""
     text = (text or "").strip()

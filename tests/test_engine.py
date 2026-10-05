@@ -139,3 +139,44 @@ def test_empty_message():
 def test_explicit_operator_request():
     r = SupportEngine(FakeLLM(), FakeSTT()).handoff("1")
     assert r.escalate
+
+
+import pytest  # noqa: E402
+
+from ai_support.language import is_small_talk  # noqa: E402
+
+
+@pytest.mark.parametrize("text,lang", [
+    ("Salom", Lang.UZ_LATN), ("Assalomu alaykum!", Lang.UZ_LATN), ("menga yordam kerak", Lang.UZ_LATN),
+    ("Ассалому алайкум", Lang.UZ_CYRL), ("Привет", Lang.RU), ("Здравствуйте, нужна помощь", Lang.RU),
+    ("hi", Lang.EN), ("Hello, I need help", Lang.EN),
+])
+def test_greeting_asks_problem_briefly_without_model(text, lang):
+    llm = FakeLLM()
+    r = run(SupportEngine(llm, FakeSTT()), IncomingMessage("1", text))
+    assert not llm.calls and r.show_menu and not r.escalate
+    assert r.text == f"{t('ask_problem', lang)}\n\n{t('menu_hint', lang)}"
+    assert len(r.text) < 120  # no list of capabilities
+
+
+@pytest.mark.parametrize("text", [
+    "Salom, kartam bloklandi", "Привет, не приходит SMS", "hi, my payment failed", "salom pul qaytaring",
+    "Здравствуйте, верните деньги",
+])
+def test_greeting_with_problem_goes_to_model(text):
+    assert not is_small_talk(text)
+    llm = FakeLLM(answer("Ok"))
+    run(SupportEngine(llm, FakeSTT()), IncomingMessage("1", text))
+    assert llm.calls
+
+
+def test_model_greeting_topic_shows_menu():
+    llm = FakeLLM(answer("Какая у вас проблема?", topic="greeting"))
+    r = run(SupportEngine(llm, FakeSTT()), IncomingMessage("1", "ну вот такое дело"))
+    assert r.show_menu
+
+
+def test_screenshot_without_caption_is_not_small_talk():
+    llm = FakeLLM(answer("Это экран добавления карты.", screen="card_add_form"))
+    r = run(SupportEngine(llm, FakeSTT()), IncomingMessage("1", "", images=[Image(png())]))
+    assert llm.calls and not r.show_menu
