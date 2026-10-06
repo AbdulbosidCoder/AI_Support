@@ -251,3 +251,57 @@ def test_unknown_quick_question_ignored():
     chat = Chat()
     asyncio.run(bot.on_quick_question(callback(chat, "q:nope"), chat))
     assert chat.sent == [] and not llm.calls
+
+
+# --- Routing in the support chat: a group vs your own private chat (SUPPORT_CHAT_ID = your id) ---
+
+from datetime import datetime
+
+from aiogram import Bot, Dispatcher
+from aiogram.types import Update
+
+
+class RoutingBot(TelegramSupportBot):
+    """Records which handler took a message instead of talking to Telegram."""
+
+    def __init__(self, support):
+        self.routed = []
+        super().__init__(Settings(support_chat_id=support), SupportEngine(FakeLLM(), FakeSTT()), UserStore(":memory:"))
+
+    async def on_client_message(self, message, bot):
+        self.routed.append("client")
+
+    async def on_operator_reply(self, message, bot):
+        self.routed.append("operator")
+
+
+def route(support, chat_id, text, reply_to=None, handoffs=()):
+    bot = RoutingBot(support)
+    bot._handoffs.update({mid: 555 for mid in handoffs})
+    dp = Dispatcher()
+    dp.include_router(bot.router)
+    chat = {"id": chat_id, "type": "private" if chat_id > 0 else "supergroup", "title": "support"}
+    data = {"message_id": 10, "date": datetime.now(), "chat": chat, "text": text,
+            "from": {"id": abs(chat_id), "is_bot": False, "first_name": "Op"}}
+    if reply_to is not None:
+        data["reply_to_message"] = {"message_id": reply_to, "date": datetime.now(), "chat": chat, "text": "Эскалация"}
+    asyncio.run(dp.feed_update(Bot("1:TEST"), Update(update_id=1, message=data)))
+    return bot.routed
+
+
+def test_group_reply_to_escalation_goes_to_client():
+    assert route(-100123, -100123, "Ответ", reply_to=5, handoffs=[5]) == ["operator"]
+
+
+def test_group_other_messages_ignored():
+    assert route(-100123, -100123, "Привет коллеги") == []
+    assert route(-100123, -100123, "Ответ", reply_to=6, handoffs=[5]) == []
+
+
+def test_own_id_as_support_chat_reply_to_escalation_is_operator_reply():
+    assert route(42, 42, "Ответ оператора", reply_to=5, handoffs=[5]) == ["operator"]
+
+
+def test_own_id_as_support_chat_still_answered_as_client():
+    assert route(42, 42, "To'lov o'tmadi") == ["client"]
+    assert route(42, 42, "Это про мой скрин", reply_to=6, handoffs=[5]) == ["client"]

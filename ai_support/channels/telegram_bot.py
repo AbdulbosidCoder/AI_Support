@@ -98,8 +98,12 @@ class TelegramSupportBot:
         r = self.router
         support = self.settings.support_chat_id
         if support is not None:
-            r.message.register(self.on_operator_reply, F.chat.id == support, F.reply_to_message)
-            r.message.register(self.ignore, F.chat.id == support)
+            r.message.register(self.on_operator_reply, F.chat.id == support, self.is_handoff_reply)
+            if support < 0:
+                # A group: everything else there is operators talking. A positive id is a private
+                # chat (e.g. your own id, to test alone): there you are also a client, so other
+                # messages get normal answers.
+                r.message.register(self.ignore, F.chat.id == support)
         r.message.register(self.on_start, CommandStart())
         r.message.register(self.on_operator_command, Command("operator"))
         r.message.register(self.on_language_command, Command("language"))
@@ -110,6 +114,10 @@ class TelegramSupportBot:
 
     async def ignore(self, message: Message) -> None:
         return None
+
+    def is_handoff_reply(self, message: Message) -> bool:
+        """A reply to one of the bot's escalation posts."""
+        return message.reply_to_message is not None and message.reply_to_message.message_id in self._handoffs
 
     def register_user(self, message: Message) -> User:
         """Store the client (first contact) or refresh their details; keeps the chosen language."""
@@ -270,8 +278,8 @@ class TelegramSupportBot:
             await bot.forward_message(chat, message.chat.id, message.message_id)
 
     async def on_operator_reply(self, message: Message, bot: Bot) -> None:
-        client = self._handoffs.get(message.reply_to_message.message_id)
-        if client is None or not (message.text or message.caption):
+        client = self._handoffs[message.reply_to_message.message_id]
+        if not (message.text or message.caption):
             return
         await bot.send_message(client, message.text or message.caption)
 
