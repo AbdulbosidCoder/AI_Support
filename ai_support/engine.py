@@ -13,6 +13,7 @@ from .models import BotReply, IncomingMessage, Lang
 from .pii import mask_pii
 from .stt import SpeechToText, STTError
 from .templates import t
+from .videos import VideoLibrary
 
 log = logging.getLogger(__name__)
 
@@ -23,6 +24,7 @@ class ConversationStore:
     def __init__(self, max_turns: int = 6):
         self._turns: dict[str, deque[Turn]] = defaultdict(lambda: deque(maxlen=max_turns * 2))
         self._lang: dict[str, Lang] = {}
+        self._videos_sent: dict[str, set[str]] = defaultdict(set)
 
     def history(self, user_id: str) -> list[Turn]:
         turns = list(self._turns[user_id])
@@ -36,6 +38,13 @@ class ConversationStore:
 
     def clear(self, user_id: str) -> None:
         self._turns.pop(user_id, None)
+        self._videos_sent.pop(user_id, None)
+
+    def video_sent(self, user_id: str, video_id: str) -> bool:
+        return video_id in self._videos_sent[user_id]
+
+    def mark_video_sent(self, user_id: str, video_id: str) -> None:
+        self._videos_sent[user_id].add(video_id)
 
     def language(self, user_id: str) -> Lang | None:
         return self._lang.get(user_id)
@@ -45,10 +54,12 @@ class ConversationStore:
 
 
 class SupportEngine:
-    def __init__(self, llm: SupportLLM, stt: SpeechToText, store: ConversationStore | None = None):
+    def __init__(self, llm: SupportLLM, stt: SpeechToText, store: ConversationStore | None = None,
+                 videos: VideoLibrary | None = None):
         self._llm = llm
         self._stt = stt
         self._store = store or ConversationStore()
+        self._videos = videos or VideoLibrary()
 
     def welcome(self, user_id: str, hint: str = "") -> str:
         return t("welcome", self._store.language(user_id) or detect_language(hint))
@@ -128,9 +139,22 @@ class SupportEngine:
                             escalation_reason=f"model unavailable: {e}", client_text=mask_pii(text))
 
         reply = self._postprocess(ans, fallback_lang, restricted, text)
+        reply.videos = self._videos_for(msg.user_id, reply)
         self._store.set_language(msg.user_id, reply.language)
         self._store.add(msg.user_id, _history_text(text, len(images), reply.screen_id), reply.text)
         return reply
+
+    def _videos_for(self, user_id: str, reply: BotReply):
+        """Instruction videos for the answer's topic, once per conversation; never with a replaced answer."""
+        if reply.guardrail_triggered:
+            return []
+        videos = []
+        for video in self._videos.for_topic(reply.topic):
+            if self._store.video_sent(user_id, video.id):
+                continue
+            self._store.mark_video_sent(user_id, video.id)
+            videos.append(video.attachment(reply.language))
+        return videos
 
     def _postprocess(self, ans: ModelAnswer, fallback_lang: Lang, restricted: str | None, text: str) -> BotReply:
         try:

@@ -23,4 +23,4 @@ def build_engine(settings: Settings, handoffs: HandoffStore | None = None) -> Su
         WhisperHTTPSTT(settings.stt_api_url, settings.stt_api_key, settings.stt_model)
         if settings.stt_api_key else DisabledSTT()
     )
-    return SupportEngine(llm, stt, ConversationStore(settings.history_turns))
+    return SupportEngine(llm, stt, ConversationStore(settings.history_turns), kb.videos)

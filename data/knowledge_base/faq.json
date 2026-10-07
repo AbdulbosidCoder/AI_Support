@@ -325,16 +325,41 @@
     },
     {
       "section": "apartment",
-      "id": "pay_by_contract",
-      "title": "Оплата квартирной задолженности (рассрочка Xonsaroy)",
+      "id": "add_contract",
+      "title": "Как добавить договор (shartnoma) на квартиру в приложении Xonsaroy Pay",
       "answer_steps": [
-        "«To'lov» → «Xonsaroy muddatli to'lovi» → «Shartnoma raqamini kiriting».",
-        "Введите номер договора, проверьте задолженность и оплатите.",
-        "Раздел для купивших квартиру в Xonsaroy."
+        "Откройте приложение Xonsaroy Pay и внизу выберите «To'lov».",
+        "В блоке «Xonsaroy muddatli to'lovi» нажмите «Shartnoma raqamini kiriting» (раздел для купивших квартиру в Xonsaroy).",
+        "На экране «Muddatli to'lov Xonsaroy» введите номер договора в поле «№ shartnoma» точно как в договоре (в номере могут быть цифры и латинские буквы) или нажмите значок QR справа и отсканируйте QR-код договора — так быстрее.",
+        "Нажмите «QO'SHISH».",
+        "Договор появится в «To'lov» → «Xonsaroy muddatli to'lovi»: там название жилого комплекса, номер договора и задолженность («qarz»). Новый договор можно добавить кнопкой «Qo'shish» рядом с заголовком этого блока."
+      ],
+      "escalate_if": "Номер договора не принимается или договор не находится после проверки номера.",
+      "forbidden": [
+        "Не подтверждать данные договора и сумму задолженности со слов клиента."
+      ],
+      "source": "instruction_video",
+      "status": "draft"
+    },
+    {
+      "section": "apartment",
+      "id": "pay_by_contract",
+      "title": "Оплата квартирной задолженности по договору (рассрочка Xonsaroy) в приложении Xonsaroy Pay",
+      "answer_steps": [
+        "Если договор ещё не добавлен, сначала добавьте его: «To'lov» → «Xonsaroy muddatli to'lovi» → «Shartnoma raqamini kiriting» → номер договора → «QO'SHISH».",
+        "Откройте «To'lov» и нажмите на свой договор в блоке «Xonsaroy muddatli to'lovi».",
+        "На странице договора видны стоимость квартиры («Mulkning narxi»), первый взнос, рассрочка, задолженность и «Keyingi oylik to'lov»; ниже — «To'lov jadvali» (график) и «To'lovlar tarixi» (история платежей).",
+        "Нажмите «To'lov qilish».",
+        "В блоке «Kartadan» выберите карту, введите сумму (от 1 000 so'm) и нажмите «TO'LASH».",
+        "На экране «To'lovni tasdiqlash» проверьте получателя, номер договора, карту и сумму и нажмите «TO'LASH».",
+        "После оплаты проверьте статус в «Tarix». Если статус не «успешно», не повторяйте платёж до проверки."
       ],
       "escalate_if": null,
-      "source": "screenshots",
-      "status": "draft"
+      "source": "screenshots+instruction_video",
+      "status": "draft",
+      "forbidden": [
+        "Не подтверждать, что платёж зачислен, и не называть сроки зачисления."
+      ]
     },
     {
       "section": "apartment",
@@ -359,10 +384,10 @@
       "id": "schedule_receipt",
       "title": "График платежей, история и электронная квитанция",
       "answer_steps": [
-        "Откройте договор в «Xonsaroy muddatli to'lovi»: там график, история платежей и квитанции (уточняется)."
+        "Откройте «To'lov» → свой договор в «Xonsaroy muddatli to'lovi»: на странице договора есть «To'lov jadvali» (график платежей) и «To'lovlar tarixi» (история платежей). Электронная квитанция — уточняется."
       ],
       "escalate_if": "Клиент не находит квитанцию.",
-      "source": "project_brief",
+      "source": "project_brief+instruction_video",
       "status": "draft"
     },
     {
