@@ -847,12 +847,13 @@ def test_chat_log_keeps_the_whole_session_masked():
     asyncio.run(bot.on_client_message(client_msg(chat, "Моя карта 8600 1234 5678 9012"), tg))
     asyncio.run(bot.on_operator_reply(operator_msg(Chat(), "Проверим.", tg._next), tg))
     asyncio.run(bot.on_end_button(end_callback(chat), tg))
-    conversation_id = chatlog.for_client("telegram", "42")[0].conversation_id
+    conversation_id = chatlog._db.execute("SELECT conversation_id FROM chat_messages ORDER BY id").fetchone()[0]
     log = chatlog.for_conversation(conversation_id)
     assert [m.sender for m in log] == ["client", "bot", "system", "client", "operator", "system"]
     assert log[0].text == "Квартплата не обновилась" and log[1].text.startswith("Передаю специалисту.")
     assert "8600 1234 5678 9012" not in log[3].text
-    assert (log[4].operator_id, log[4].operator_name, log[4].handoff_id) == ("9", "Operator", 1)
+    row = chatlog._db.execute("SELECT * FROM chat_messages WHERE id = ?", (log[4].id,)).fetchone()
+    assert (row["operator_id"], row["operator_name"], row["handoff_id"]) == ("9", "Operator", 1)
     assert log[-1].text == "Разговор завершил клиент"
     conversation = feedback._db.execute("SELECT * FROM conversations WHERE id = ?", (conversation_id,)).fetchone()
     assert conversation["operator_id"] == "9"  # the session is linked to the operator who handled it
@@ -865,7 +866,8 @@ def test_chat_log_for_bot_only_conversation_and_quick_question():
     log = chatlog.for_client("telegram", "42")
     assert [(m.sender, m.text) for m in log] == [("client", QUICK_QUESTIONS[0].question[Lang.UZ_LATN]),
                                                  ("bot", "Kartalarim bo'limiga kiring.")]
-    assert log[0].conversation_id is not None and log[0].conversation_id == log[1].conversation_id
+    ids = {r[0] for r in chatlog._db.execute("SELECT conversation_id FROM chat_messages")}
+    assert len(ids) == 1 and None not in ids
 
 
 # --- Operator buttons: candidates, notes, panel ---------------------------------------------------

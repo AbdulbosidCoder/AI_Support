@@ -539,8 +539,8 @@ class TelegramSupportBot:
             conversation = self.feedback.conversation(CHANNEL, client_id)
             conversation_id = conversation.id if conversation else None
         try:
-            self.chatlog.add(CHANNEL, client_id, sender, text, kind, conversation_id, handoff_id, operator_id,
-                             operator_name)
+            self.chatlog.add(CHANNEL, client_id, sender, text, kind, operator_id=operator_id,
+                             operator_name=operator_name, handoff_id=handoff_id, conversation_id=conversation_id)
         except Exception as e:  # the log must never break the conversation itself
             log.warning("chat log failed: %s", e)
 
