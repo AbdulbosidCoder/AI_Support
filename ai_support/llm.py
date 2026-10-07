@@ -38,6 +38,8 @@ class Turn:
 class SupportLLM(Protocol):
     async def answer(self, history: list[Turn], text: str, images: list[Image], note: str = "") -> ModelAnswer: ...
 
+    def set_system_prompt(self, system_prompt: str) -> None: ...
+
 
 NO_CAPTION_NOTE = (
     "Клиент прислал изображение без подписи. Определи по самому изображению, что его беспокоит: "
@@ -75,6 +77,10 @@ class ClaudeSupportLLM:
         self._schema = schema
         self._model = model
         self._effort = effort
+
+    def set_system_prompt(self, system_prompt: str) -> None:
+        """The knowledge base changed (an operator answer was approved): use it from the next request."""
+        self._system = system_prompt
 
     async def answer(self, history: list[Turn], text: str, images: list[Image], note: str = "") -> ModelAnswer:
         messages = [{"role": t.role, "content": t.text} for t in history]

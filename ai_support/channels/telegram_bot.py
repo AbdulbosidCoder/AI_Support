@@ -4,7 +4,9 @@ Every client is registered in the user store with the language they chose on /st
 the reply keyboard carries quick questions and settings (see ai_support/menu.py).
 
 Escalations are posted to SUPPORT_CHAT_ID. An operator answers by replying to that post,
-and the bot relays the reply to the client.
+and the bot relays the reply to the client. Escalations and operator replies are saved
+(ai_support/handoffs.py); an operator answer becomes a knowledge-base candidate, and operators
+approve or reject candidates in the support chat with /candidates, /approve and /reject.
 """
 from __future__ import annotations
 
@@ -26,11 +28,13 @@ from aiogram.types import (
 
 from ..config import Settings
 from ..engine import SupportEngine
-from ..factory import build_engine
+from ..factory import build_engine, load_knowledge
+from ..handoffs import Candidate, HandoffStore, ReviewError
 from ..menu import (
     CHANGE_LANGUAGE_LABEL, CHOOSE_LANGUAGE, LANGUAGE_CHOICES, QUICK_QUESTIONS, match_menu, menu_rows, quick_question,
 )
 from ..models import Audio, BotReply, Image, IncomingMessage, Lang
+from ..prompt import build_system_prompt
 from ..templates import t
 from ..users import User, UserStore
 from .media_group import MediaGroupCollector
@@ -40,6 +44,13 @@ log = logging.getLogger(__name__)
 # Telegram bot API download limit is 20 MB; larger images are rejected before downloading.
 MAX_IMAGE_BYTES = 20 * 1024 * 1024
 CHANNEL = "telegram"
+# Telegram message limit is 4096 characters; candidate texts are shortened in lists.
+PREVIEW_CHARS = 700
+REVIEW_HELP = (
+    "/approve N — добавить в базу знаний как есть\n"
+    "/approve N <исправленный ответ> — добавить с вашим текстом (уберите детали конкретного клиента)\n"
+    "/reject N — не добавлять"
+)
 
 
 def language_keyboard() -> InlineKeyboardMarkup:
@@ -84,12 +95,13 @@ def image_source(message: Message):
 
 
 class TelegramSupportBot:
-    def __init__(self, settings: Settings, engine: SupportEngine, users: UserStore | None = None):
+    def __init__(self, settings: Settings, engine: SupportEngine, users: UserStore | None = None,
+                 handoffs: HandoffStore | None = None):
         self.settings = settings
         self.engine = engine
         self.users = users or UserStore(":memory:")
-        # support-chat message id -> client chat id, for operator replies.
-        self._handoffs: dict[int, int] = {}
+        # Escalation posts in the support chat -> client, operator replies and KB candidates.
+        self.handoffs = handoffs or HandoffStore(":memory:")
         self._albums: MediaGroupCollector[tuple[Message, Bot]] | None = None
         self.router = Router()
         self._register()
@@ -99,6 +111,9 @@ class TelegramSupportBot:
         support = self.settings.support_chat_id
         if support is not None:
             r.message.register(self.on_operator_reply, F.chat.id == support, self.is_handoff_reply)
+            r.message.register(self.on_candidates, F.chat.id == support, Command("candidates"))
+            r.message.register(self.on_approve, F.chat.id == support, Command("approve"))
+            r.message.register(self.on_reject, F.chat.id == support, Command("reject"))
             if support < 0:
                 # A group: everything else there is operators talking. A positive id is a private
                 # chat (e.g. your own id, to test alone): there you are also a client, so other
@@ -117,7 +132,8 @@ class TelegramSupportBot:
 
     def is_handoff_reply(self, message: Message) -> bool:
         """A reply to one of the bot's escalation posts."""
-        return message.reply_to_message is not None and message.reply_to_message.message_id in self._handoffs
+        reply_to = message.reply_to_message
+        return reply_to is not None and self.handoffs.find(str(message.chat.id), str(reply_to.message_id)) is not None
 
     def register_user(self, message: Message) -> User:
         """Store the client (first contact) or refresh their details; keeps the chosen language."""
@@ -273,20 +289,97 @@ class TelegramSupportBot:
             "Ответьте реплаем на это сообщение, и бот перешлёт ответ клиенту."
         )
         posted = await bot.send_message(chat, summary)
-        self._handoffs[posted.message_id] = message.chat.id
+        self.handoffs.open(CHANNEL, str(message.chat.id), str(chat), str(posted.message_id), reply,
+                           self.engine.recent_turns(str(message.chat.id)))
         if message.photo or message.voice or message.document or message.audio:
             await bot.forward_message(chat, message.chat.id, message.message_id)
 
     async def on_operator_reply(self, message: Message, bot: Bot) -> None:
-        client = self._handoffs[message.reply_to_message.message_id]
-        if not (message.text or message.caption):
+        handoff = self.handoffs.find(str(message.chat.id), str(message.reply_to_message.message_id))
+        text = message.text or message.caption
+        if handoff is None or not text:
             return
-        await bot.send_message(client, message.text or message.caption)
+        await bot.send_message(int(handoff.client_chat_id), text)
+        u = message.from_user
+        candidate, created = self.handoffs.add_operator_reply(
+            handoff.id, text, str(u.id) if u else None, u.full_name if u else None,
+        )
+        if candidate is not None and created:
+            await message.answer(f"Ответ сохранён. Кандидат #{candidate.id} в базу знаний:\n\n"
+                                 f"{candidate_text(candidate)}\n\n{REVIEW_HELP.replace('N', str(candidate.id))}")
+
+    async def on_candidates(self, message: Message) -> None:
+        pending = self.handoffs.candidates()
+        if not pending:
+            await message.answer("Новых кандидатов в базу знаний нет.")
+            return
+        body = "\n\n".join(candidate_text(c) for c in pending)
+        await message.answer(f"Кандидаты в базу знаний ({len(pending)}):\n\n{body}\n\n{REVIEW_HELP}"[:4096])
+
+    async def on_approve(self, message: Message) -> None:
+        parts = (message.text or "").split(maxsplit=2)
+        if len(parts) < 2 or not parts[1].isdigit():
+            await message.answer(REVIEW_HELP)
+            return
+        try:
+            c = self.handoffs.approve(int(parts[1]), reviewer_name(message), parts[2] if len(parts) > 2 else None)
+        except ReviewError as e:
+            await message.answer(review_error_text(int(parts[1]), e))
+            return
+        self.reload_knowledge()
+        await message.answer(f"Кандидат #{c.id} добавлен в базу знаний, бот использует его со следующего вопроса.")
+
+    async def on_reject(self, message: Message) -> None:
+        parts = (message.text or "").split(maxsplit=2)
+        if len(parts) < 2 or not parts[1].isdigit():
+            await message.answer(REVIEW_HELP)
+            return
+        try:
+            c = self.handoffs.reject(int(parts[1]), reviewer_name(message))
+        except ReviewError as e:
+            await message.answer(review_error_text(int(parts[1]), e))
+            return
+        await message.answer(f"Кандидат #{c.id} отклонён.")
+
+    def reload_knowledge(self) -> None:
+        self.engine.set_system_prompt(build_system_prompt(load_knowledge(self.settings, self.handoffs)))
 
     @staticmethod
     async def _download(bot: Bot, obj) -> bytes:
         buf = await bot.download(obj)
         return buf.read()
+
+
+def _short(text: str) -> str:
+    return text if len(text) <= PREVIEW_CHARS else text[:PREVIEW_CHARS] + "…"
+
+
+def candidate_text(c: Candidate) -> str:
+    lines = [f"#{c.id} · {c.language} · тема {c.topic or '-'}", f"Вопрос: {_short(c.question)}",
+             f"Ответ: {_short(c.answer)}"]
+    violations = c.violations()
+    if violations:
+        lines.append("⚠ В ответе есть то, что бот говорить не может ("
+                     + ", ".join(v.category for v in violations)
+                     + "). Одобрить можно только с исправленным текстом.")
+    return "\n".join(lines)
+
+
+def reviewer_name(message: Message) -> str:
+    u = message.from_user
+    if u is None:
+        return str(message.chat.id)
+    return f"@{u.username}" if u.username else f"{u.full_name} ({u.id})"
+
+
+def review_error_text(candidate_id: int, e: ReviewError) -> str:
+    reason = str(e)
+    if reason == "not_found":
+        return f"Кандидата #{candidate_id} нет."
+    if reason == "already_reviewed":
+        return f"Кандидат #{candidate_id} уже проверен."
+    return (f"Кандидат #{candidate_id} не добавлен: в ответе есть то, что бот говорить не может "
+            f"({reason.removeprefix('forbidden: ')}). Пришлите /approve {candidate_id} <исправленный ответ>.")
 
 
 # Commands shown in Telegram's "Menu" button; Uzbek is the default, ru/en follow the app language.
@@ -310,7 +403,8 @@ async def main() -> None:
     bot = Bot(settings.telegram_token)
     dp = Dispatcher()
     users = UserStore(settings.db_path)
-    dp.include_router(TelegramSupportBot(settings, build_engine(settings), users).router)
+    handoffs = HandoffStore(settings.db_path)
+    dp.include_router(TelegramSupportBot(settings, build_engine(settings, handoffs), users, handoffs).router)
     try:
         await set_commands(bot)
     except Exception as e:  # commands are a convenience; the bot works without them

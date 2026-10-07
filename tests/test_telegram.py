@@ -84,7 +84,7 @@ def test_reply_to_other_chat_image_ignored():
 from aiogram.types import InlineKeyboardMarkup, ReplyKeyboardMarkup
 
 from ai_support.menu import CHOOSE_LANGUAGE, OPERATOR_LABEL, QUICK_QUESTIONS, SETTINGS_LABEL
-from ai_support.models import Lang
+from ai_support.models import BotReply, Lang
 from ai_support.templates import t
 from ai_support.users import UserStore
 from fakes import answer
@@ -274,10 +274,14 @@ class RoutingBot(TelegramSupportBot):
     async def on_operator_reply(self, message, bot):
         self.routed.append("operator")
 
+    async def on_approve(self, message):
+        self.routed.append("approve")
+
 
 def route(support, chat_id, text, reply_to=None, handoffs=()):
     bot = RoutingBot(support)
-    bot._handoffs.update({mid: 555 for mid in handoffs})
+    for mid in handoffs:
+        bot.handoffs.open("telegram", "555", str(chat_id), str(mid), BotReply("…", Lang.RU, escalate=True))
     dp = Dispatcher()
     dp.include_router(bot.router)
     chat = {"id": chat_id, "type": "private" if chat_id > 0 else "supergroup", "title": "support"}
@@ -305,3 +309,113 @@ def test_own_id_as_support_chat_reply_to_escalation_is_operator_reply():
 def test_own_id_as_support_chat_still_answered_as_client():
     assert route(42, 42, "To'lov o'tmadi") == ["client"]
     assert route(42, 42, "Это про мой скрин", reply_to=6, handoffs=[5]) == ["client"]
+
+
+# --- Saved escalations, operator replies and learning from them ---------------------------------
+
+from ai_support.handoffs import HandoffStore
+
+
+class SupportBot:
+    """Telegram stand-in for escalations: records what goes to which chat."""
+
+    def __init__(self):
+        self.sent = []
+        self._next = 100
+
+    async def send_message(self, chat, text, **_):
+        self._next += 1
+        self.sent.append((chat, text))
+        return NS(message_id=self._next)
+
+    async def send_chat_action(self, *_):
+        pass
+
+    async def forward_message(self, *_):
+        pass
+
+
+def operator_msg(chat, text, reply_to, support=-100123, uid=9):
+    return NS(text=text, caption=None, chat=NS(id=support), reply_to_message=NS(message_id=reply_to),
+              from_user=NS(id=uid, username="op", full_name="Operator"), answer=chat.answer)
+
+
+def escalated(llm=None, handoffs=None):
+    """A client question the bot could not answer, escalated to the support chat."""
+    llm = llm or FakeLLM(answer("Передаю специалисту.", escalate=True, reason="no answer in KB", topic="other"))
+    handoffs = handoffs or HandoffStore(":memory:")
+    bot = TelegramSupportBot(Settings(support_chat_id=-100123), SupportEngine(llm, FakeSTT()),
+                             UserStore(":memory:"), handoffs)
+    tg = SupportBot()
+    client = Chat()
+    asyncio.run(bot.on_client_message(client_msg(client, "Квартплата не обновилась после оплаты"), tg))
+    return bot, tg, llm, handoffs
+
+
+def test_operator_reply_relayed_saved_and_offered_as_candidate():
+    bot, tg, _, handoffs = escalated()
+    post = tg._next
+    support = Chat()
+    asyncio.run(bot.on_operator_reply(operator_msg(support, "Обновление долга занимает время, проверьте завтра.", post), tg))
+    assert tg.sent[-1] == (42, "Обновление долга занимает время, проверьте завтра.")
+    c = handoffs.candidates()[0]
+    assert c.question == "Квартплата не обновилась после оплаты" and c.language == "ru"
+    assert f"#{c.id}" in support.sent[-1][0] and "/approve" in support.sent[-1][0]
+    assert handoffs.learned() == []
+
+
+def test_escalation_link_survives_bot_restart(tmp_path):
+    db = tmp_path / "bot.sqlite3"
+    bot, tg, _, _ = escalated(handoffs=HandoffStore(db))
+    post = tg._next
+    restarted = TelegramSupportBot(Settings(support_chat_id=-100123), SupportEngine(FakeLLM(), FakeSTT()),
+                                   UserStore(":memory:"), HandoffStore(db))
+    assert restarted.is_handoff_reply(operator_msg(Chat(), "Javob", post))
+    asyncio.run(restarted.on_operator_reply(operator_msg(Chat(), "Javob", post), tg))
+    assert tg.sent[-1] == (42, "Javob")
+
+
+def test_approve_updates_bot_knowledge():
+    bot, tg, llm, handoffs = escalated()
+    asyncio.run(bot.on_operator_reply(operator_msg(Chat(), "Чек об оплате есть в «Tarix».", tg._next), tg))
+    cid = handoffs.candidates()[0].id
+    support = Chat()
+    asyncio.run(bot.on_candidates(operator_msg(support, "/candidates", None)))
+    assert f"#{cid}" in support.sent[-1][0]
+    asyncio.run(bot.on_approve(operator_msg(support, f"/approve {cid}", None)))
+    assert "добавлен" in support.sent[-1][0]
+    assert "Чек об оплате есть в «Tarix»." in llm.system_prompts[-1]
+    assert handoffs.candidate(cid).status == "approved"
+
+
+def test_forbidden_operator_answer_not_approved_and_bot_unchanged():
+    bot, tg, llm, handoffs = escalated()
+    asyncio.run(bot.on_operator_reply(operator_msg(Chat(), "Pulingiz 2 soat ichida qaytadi.", tg._next), tg))
+    cid = handoffs.candidates()[0].id
+    support = Chat()
+    asyncio.run(bot.on_approve(operator_msg(support, f"/approve {cid}", None)))
+    assert "не добавлен" in support.sent[-1][0] and llm.system_prompts == []
+    asyncio.run(bot.on_approve(operator_msg(support, f"/approve {cid} To'lovni takrorlamang, tekshiruvga yuboramiz.", None)))
+    assert "To'lovni takrorlamang" in llm.system_prompts[-1] and "2 soat ichida" not in llm.system_prompts[-1]
+
+
+def test_reject_keeps_answer_out_of_knowledge():
+    bot, tg, llm, handoffs = escalated()
+    asyncio.run(bot.on_operator_reply(operator_msg(Chat(), "Javob", tg._next), tg))
+    cid = handoffs.candidates()[0].id
+    support = Chat()
+    asyncio.run(bot.on_reject(operator_msg(support, f"/reject {cid}", None)))
+    assert "отклонён" in support.sent[-1][0] and handoffs.learned() == [] and llm.system_prompts == []
+
+
+def test_review_commands_need_an_id():
+    bot, _, _, _ = escalated()
+    support = Chat()
+    asyncio.run(bot.on_approve(operator_msg(support, "/approve", None)))
+    assert "/approve N" in support.sent[-1][0]
+
+
+def test_clients_cannot_approve():
+    # Review commands only work in the support chat; a client's /approve is just a message to the bot.
+    assert route(-100123, 42, "/approve 1") == ["client"]
+    assert route(-100123, -100123, "/approve 1") == ["approve"]

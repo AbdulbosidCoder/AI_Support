@@ -53,6 +53,13 @@ class SupportEngine:
         """The client chose a language: use it for fixed replies until their messages say otherwise."""
         self._store.set_language(user_id, lang)
 
+    def set_system_prompt(self, system_prompt: str) -> None:
+        self._llm.set_system_prompt(system_prompt)
+
+    def recent_turns(self, user_id: str) -> list[Turn]:
+        """The client's recent conversation (PII already masked), saved with a hand-off."""
+        return self._store.history(user_id)
+
     def handoff(self, user_id: str, default: Lang = Lang.UZ_LATN) -> BotReply:
         """Client explicitly asked for a human; `default` is the client's chosen language, if known."""
         lang = self._store.language(user_id) or default
