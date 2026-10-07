@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Xonsaroy Pay · Админ</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root {
+    --bg: var(--tg-theme-bg-color, #ffffff);
+    --bg2: var(--tg-theme-secondary-bg-color, #f1f3f6);
+    --text: var(--tg-theme-text-color, #1b1f24);
+    --hint: var(--tg-theme-hint-color, #7a828c);
+    --link: var(--tg-theme-link-color, #2a7ae2);
+    --accent: var(--tg-theme-button-color, #2a7ae2);
+    --accent-text: var(--tg-theme-button-text-color, #ffffff);
+    --line: color-mix(in srgb, var(--hint) 25%, transparent);
+    --client: var(--bg);
+    --bot: color-mix(in srgb, var(--accent) 14%, var(--bg));
+    --op: color-mix(in srgb, #2e9d5a 18%, var(--bg));
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg2); color: var(--text);
+         font: 15px/1.4 -apple-system, system-ui, "Segoe UI", Roboto, sans-serif; }
+  header { position: sticky; top: 0; z-index: 2; background: var(--bg); border-bottom: 1px solid var(--line); }
+  nav { display: flex; overflow-x: auto; }
+  nav button { flex: 1; padding: 12px 10px; border: 0; background: none; color: var(--hint); font: inherit;
+               font-weight: 600; border-bottom: 2px solid transparent; white-space: nowrap; }
+  nav button.on { color: var(--accent); border-bottom-color: var(--accent); }
+  main { padding: 12px 16px 40px; max-width: 760px; margin: 0 auto; }
+  .cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+  .card { background: var(--bg); border-radius: 12px; padding: 12px; }
+  .card b { display: block; font-size: 22px; }
+  .card span, .muted { color: var(--hint); font-size: 13px; }
+  .list { background: var(--bg); border-radius: 12px; overflow: hidden; margin-top: 10px; }
+  .row { display: flex; gap: 10px; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--line);
+         cursor: pointer; }
+  .row:last-child { border-bottom: 0; }
+  .row .grow { flex: 1; min-width: 0; }
+  .row .title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--hint); flex: none; }
+  .dot.open { background: #2e9d5a; }
+  .dot.wait { background: #e0902a; }
+  .pill { font-size: 12px; padding: 2px 8px; border-radius: 10px; background: var(--bg2); color: var(--hint); }
+  .filters { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+  select, input, .btn { font: inherit; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line);
+                        background: var(--bg); color: var(--text); }
+  input { width: 100%; }
+  .btn { background: var(--accent); color: var(--accent-text); border: 0; font-weight: 600; cursor: pointer; }
+  .btn.ghost { background: var(--bg2); color: var(--text); }
+  form.add { display: grid; gap: 8px; background: var(--bg); padding: 12px; border-radius: 12px; margin-top: 10px; }
+  h2 { font-size: 17px; margin: 16px 0 6px; }
+  .chat { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+  .msg { max-width: 82%; padding: 8px 10px; border-radius: 14px; white-space: pre-wrap; word-wrap: break-word; }
+  .msg small { display: block; color: var(--hint); font-size: 11px; margin-top: 3px; }
+  .msg .who { font-size: 12px; font-weight: 600; margin-bottom: 2px; }
+  .msg.client { align-self: flex-start; background: var(--client); border-bottom-left-radius: 4px; }
+  .msg.bot { align-self: flex-end; background: var(--bot); border-bottom-right-radius: 4px; }
+  .msg.operator { align-self: flex-end; background: var(--op); border-bottom-right-radius: 4px; }
+  .msg.system, .msg.event { align-self: center; background: none; color: var(--hint); font-size: 12px; padding: 2px; }
+  .back { color: var(--link); background: none; border: 0; font: inherit; padding: 4px 0; cursor: pointer; }
+  .head { background: var(--bg); border-radius: 12px; padding: 12px; margin-top: 6px; }
+  .empty { text-align: center; color: var(--hint); padding: 30px 10px; }
+</style>
+</head>
+<body>
+<header><nav id="tabs">
+  <button data-tab="overview">Обзор</button>
+  <button data-tab="sessions">Сессии</button>
+  <button data-tab="operators">Операторы</button>
+  <button data-tab="clients">Клиенты</button>
+</nav></header>
+<main id="view"><div class="empty">Загрузка…</div></main>
+<script>
+const tg = window.Telegram && window.Telegram.WebApp;
+if (tg) { tg.ready(); tg.expand(); }
+const initData = tg ? tg.initData : "";
+const view = document.getElementById("view");
+let timer = null;
+
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const when = iso => { if (!iso) return ""; const d = new Date(iso);
+  return isNaN(d) ? iso : d.toLocaleString("ru-RU", {day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit"}); };
+const LANG = {uz_latn: "uz", uz_cyrl: "уз", ru: "ru", en: "en"};
+const WHO = {client: "Клиент", bot: "🤖 Бот", operator: "👨‍💼 Оператор"};
+const KIND = {photo: "📷 Фото", voice: "🎤 Голос", audio: "🎵 Аудио", document: "📎 Файл"};
+
+async function api(path, options = {}) {
+  const res = await fetch(path, {...options, headers: {"Content-Type": "application/json",
+    "X-Telegram-Init-Data": initData, ...(options.headers || {})}});
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw Object.assign(new Error(body.error || res.status), {status: res.status, body});
+  return body;
+}
+
+function fail(e) {
+  if (e.status === 401) view.innerHTML = '<div class="empty">Откройте панель через админ-бота в Telegram.</div>';
+  else if (e.status === 403) view.innerHTML = `<div class="empty">Нет доступа. Добавьте ваш id <b>${esc(e.body.user_id)}</b> в ADMIN_IDS.</div>`;
+  else view.innerHTML = `<div class="empty">Ошибка: ${esc(e.message)}</div>`;
+}
+
+function route() {
+  clearInterval(timer);
+  const [name, arg] = (location.hash.slice(1) || "overview").split("=");
+  const tab = {session: "sessions", client: "clients"}[name] || name;
+  document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("on", b.dataset.tab === tab));
+  const pages = {overview, sessions, session, operators, clients, client};
+  (pages[name] || overview)(arg).catch(fail);
+}
+document.getElementById("tabs").onclick = e => { if (e.target.dataset.tab) location.hash = e.target.dataset.tab; };
+window.addEventListener("hashchange", route);
+
+async function overview() {
+  const o = await api("/api/overview");
+  const score = s => s.count ? `${s.average}★` : "—";
+  const card = (v, label) => `<div class="card"><b>${esc(v)}</b><span>${label}</span></div>`;
+  view.innerHTML = `<div class="cards">
+    ${card(o.clients, `клиентов · +${o.clients_today} сегодня`)}
+    ${card(o.sessions_open, "открытых сессий")}
+    ${card(o.waiting_operator, "ждут оператора")}
+    ${card(o.handoffs_today, "передано операторам сегодня")}
+    ${card(o.sessions_today, "сессий сегодня")}
+    ${card(o.messages_today, "сообщений сегодня")}
+    ${card(score(o.rating_bot), `рейтинг бота · ${o.rating_bot.count} оценок`)}
+    ${card(score(o.rating_operators), `рейтинг операторов · ${o.rating_operators.count}`)}
+    ${card(o.operators_active, "активных операторов")}
+  </div>
+  <h2>Ждут оператора</h2><div id="waiting" class="list"></div>`;
+  const open = (await api("/api/sessions?status=open&limit=50")).filter(s => s.escalated && !s.operator_id);
+  document.getElementById("waiting").innerHTML = open.length ? open.map(sessionRow).join("")
+    : '<div class="empty">Никто не ждёт</div>';
+  timer = setInterval(() => overview().catch(fail), 15000);
+}
+
+function sessionRow(s) {
+  const dot = s.status === "open" ? (s.escalated && !s.operator_id ? "wait" : "open") : "";
+  const who = s.operator_name || (s.escalated ? "ждёт оператора" : "бот");
+  const rating = s.rating ? ` · ${s.rating.stars}★` : "";
+  return `<div class="row" onclick="location.hash='session=${s.id}'"><span class="dot ${dot}"></span>
+    <div class="grow"><div class="title">${esc(s.client_name)}</div>
+    <div class="muted">${esc(who)} · ${esc(s.topic || "—")}${rating}</div></div>
+    <span class="muted">${when(s.opened_at)}</span></div>`;
+}
+
+async function sessions() {
+  const q = new URLSearchParams(location.search);
+  const ops = await api("/api/operators");
+  const state = sessions.state || (sessions.state = {status: "", operator: q.get("operator") || ""});
+  const load = async () => {
+    const p = new URLSearchParams({limit: 200});
+    if (state.status) p.set("status", state.status);
+    if (state.operator) p.set("operator", state.operator);
+    const list = await api("/api/sessions?" + p);
+    document.getElementById("list").innerHTML = list.length ? list.map(sessionRow).join("")
+      : '<div class="empty">Сессий нет</div>';
+  };
+  view.innerHTML = `<div class="filters">
+    <select id="status"><option value="">Все</option><option value="open">Открытые</option><option value="closed">Завершённые</option></select>
+    <select id="operator"><option value="">Все операторы</option>${ops.map(o =>
+      `<option value="${esc(o.user_id)}">${esc(o.name)}</option>`).join("")}</select></div>
+    <div id="list" class="list"><div class="empty">Загрузка…</div></div>`;
+  const st = document.getElementById("status"), op = document.getElementById("operator");
+  st.value = state.status; op.value = state.operator;
+  st.onchange = () => { state.status = st.value; load().catch(fail); };
+  op.onchange = () => { state.operator = op.value; load().catch(fail); };
+  await load();
+  timer = setInterval(() => load().catch(fail), 15000);
+}
+
+async function session(id) {
+  const render = async () => {
+    const s = await api(`/api/sessions/${encodeURIComponent(id)}`);
+    const msgs = s.messages.map(m => (m.sender === "system" || m.sender === "event")
+      ? `<div class="msg system">${esc(m.text)} · ${when(m.created_at)}</div>`
+      : `<div class="msg ${esc(m.sender)}"><div class="who">${esc(m.sender === "operator" && m.operator_name
+          ? "👨‍💼 " + m.operator_name : WHO[m.sender] || m.sender)}</div>${m.kind !== "text"
+          ? `<i>${KIND[m.kind] || m.kind}</i>${m.text ? "\n" : ""}` : ""}${esc(m.text)}<small>${when(m.created_at)}</small></div>`);
+    const stillAtBottom = innerHeight + scrollY >= document.body.scrollHeight - 40;
+    view.innerHTML = `<button class="back" onclick="history.back()">‹ Назад</button>
+      <div class="head"><b>${esc(s.client_name)}</b> ${s.client_username ? "@" + esc(s.client_username) : ""}
+        ${s.client_phone ? " · " + esc(s.client_phone) : ""}
+        <div class="muted">Сессия #${s.id} · ${s.status === "open" ? "открыта" : "завершена"} ·
+          ${esc(LANG[s.language] || s.language)} · ${esc(s.topic || "—")} ·
+          ${esc(s.operator_name || (s.escalated ? "ждёт оператора" : "бот"))}
+          ${s.rating ? ` · оценка ${s.rating.stars}★` : ""}</div>
+        <div class="filters"><button class="btn ghost" onclick="location.hash='client=${esc(s.client_id)}'">Все сессии клиента</button></div>
+      </div>
+      <div class="chat">${msgs.join("") || '<div class="empty">Сообщений нет</div>'}</div>`;
+    if (stillAtBottom) scrollTo(0, document.body.scrollHeight);
+    return s;
+  };
+  const s = await render();
+  if (s.status === "open") timer = setInterval(() => render().catch(fail), 5000);
+}
+
+async function operators() {
+  const ops = await api("/api/operators");
+  view.innerHTML = `<form class="add" id="add"><b>Добавить оператора</b>
+      <input name="user_id" inputmode="numeric" placeholder="Telegram id (оператор узнает его у админ-бота)" required>
+      <input name="name" placeholder="Имя">
+      <input name="username" placeholder="@username (необязательно)">
+      <button class="btn">Добавить</button></form>
+    <p class="muted">Пока список пуст, клиентам отвечает любой участник чата поддержки; после добавления первого
+      оператора — только активные операторы из списка.</p>
+    <div class="list">${ops.map(o => `<div class="row"><span class="dot ${o.active ? "open" : ""}"></span>
+      <div class="grow" onclick="location.hash='sessions'; sessions.state={status:'', operator:'${esc(o.user_id)}'}">
+        <div class="title">${esc(o.name)} ${o.username ? "@" + esc(o.username) : ""}</div>
+        <div class="muted">id ${esc(o.user_id)} · ответов ${o.replies} · сессий ${o.sessions} (открыто ${o.sessions_open})
+          · ${o.rating !== null ? o.rating + "★ (" + o.ratings + ")" : "оценок нет"}
+          ${o.last_reply ? " · последний ответ " + when(o.last_reply) : ""}</div></div>
+      <button class="btn ghost" data-id="${esc(o.user_id)}" data-name="${esc(o.name)}"
+        data-act="${o.registered ? (o.active ? "off" : "on") : "add"}">${o.registered ? (o.active ? "Отключить" : "Включить") : "Добавить"}</button>
+    </div>`).join("") || '<div class="empty">Операторов пока нет</div>'}</div>`;
+  document.getElementById("add").onsubmit = async e => {
+    e.preventDefault();
+    const f = new FormData(e.target);
+    await api("/api/operators", {method: "POST", body: JSON.stringify(Object.fromEntries(f))}).catch(err =>
+      alert(err.message === "bad_id" ? "Telegram id — это число" : err.message));
+    operators().catch(fail);
+  };
+  view.querySelectorAll("button[data-act]").forEach(b => b.onclick = async () => {
+    const id = b.dataset.id;
+    if (b.dataset.act === "add") await api("/api/operators", {method: "POST", body: JSON.stringify({user_id: id, name: b.dataset.name})});
+    else await api(`/api/operators/${encodeURIComponent(id)}/active`, {method: "POST", body: JSON.stringify({active: b.dataset.act === "on"})});
+    operators().catch(fail);
+  });
+}
+
+async function clients() {
+  view.innerHTML = `<input id="q" placeholder="Поиск: имя, @username, телефон, id">
+    <div id="list" class="list"><div class="empty">Загрузка…</div></div>`;
+  const q = document.getElementById("q");
+  const load = async () => {
+    const list = await api("/api/clients?" + new URLSearchParams({q: q.value, limit: 200}));
+    document.getElementById("list").innerHTML = list.map(c => `<div class="row" onclick="location.hash='client=${esc(c.chat_id)}'">
+      <div class="grow"><div class="title">${esc(c.full_name || c.username || c.chat_id)}
+        ${c.username ? '<span class="muted">@' + esc(c.username) + "</span>" : ""}</div>
+      <div class="muted">${c.phone ? esc(c.phone) + " · " : ""}${esc(LANG[c.language] || "язык не выбран")} ·
+        сессий ${c.sessions} · ${esc(c.level)}</div></div>
+      <span class="muted">${when(c.last_message || c.created_at)}</span></div>`).join("") || '<div class="empty">Нет клиентов</div>';
+  };
+  let t; q.oninput = () => { clearTimeout(t); t = setTimeout(() => load().catch(fail), 300); };
+  await load();
+}
+
+async function client(id) {
+  const list = await api("/api/sessions?" + new URLSearchParams({client: id, limit: 200}));
+  view.innerHTML = `<button class="back" onclick="history.back()">‹ Назад</button>
+    <h2>${esc(list[0] ? list[0].client_name : id)}</h2>
+    <div class="list">${list.map(sessionRow).join("") || '<div class="empty">Сессий нет</div>'}</div>`;
+}
+
+if (tg && tg.BackButton) {
+  tg.BackButton.onClick(() => history.back());
+  window.addEventListener("hashchange", () => /^#(session|client)=/.test(location.hash)
+    ? tg.BackButton.show() : tg.BackButton.hide());
+}
+route();
+</script>
+</body>
+</html>

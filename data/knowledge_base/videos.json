@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "updated": "2026-10-07",
+  "description": "Видео-инструкции. Бот отправляет видео после ответа по теме из topics (section/id из faq.json). Источник: file (файл в data/knowledge_base/videos/), url или file_ids (уже загруженная копия, например {\"telegram\": \"<file_id>\"}). Видео без источника — заготовка, бот его не отправляет.",
+  "videos": [
+    {
+      "id": "contract_and_payment",
+      "title": {
+        "uz_latn": "Video-yo'riqnoma: Xonsaroy Pay ilovasida shartnoma qo'shish va to'lov qilish",
+        "uz_cyrl": "Видео-йўриқнома: Xonsaroy Pay иловасида шартнома қўшиш ва тўлов қилиш",
+        "ru": "Видео-инструкция: как добавить договор и оплатить его в приложении Xonsaroy Pay",
+        "en": "Video guide: how to add a contract and pay it in the Xonsaroy Pay app"
+      },
+      "topics": [
+        "apartment/add_contract",
+        "apartment/pay_by_contract"
+      ],
+      "file": "contract_and_payment.mp4",
+      "url": "",
+      "file_ids": {},
+      "status": "waiting_for_redacted_video",
+      "note": "Шаги в faq.json написаны по присланному видео (2026-10-07). Само видео не добавлено: в нём видны имя, баланс, карта и данные договора реального клиента. Нужна запись с тестовым аккаунтом или с размытыми данными."
+    }
+  ]
+}

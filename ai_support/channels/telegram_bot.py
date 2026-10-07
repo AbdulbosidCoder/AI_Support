@@ -24,6 +24,8 @@ post carries the AI's assessment of the client, buttons for the operator's own a
 
 Every message of the chat (client, bot, operator, system events) is saved in ai_support/chatlog.py,
 linked to the conversation, so support staff can read sessions as chats.
+
+Once an admin added operators (ai_support/operators.py, admin bot) only they can answer clients.
 """
 from __future__ import annotations
 
@@ -41,11 +43,13 @@ from aiogram.types import (
     ForceReply,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    FSInputFile,
     KeyboardButton,
     Message,
     ReactionTypeEmoji,
     ReplyKeyboardMarkup,
     ReplyKeyboardRemove,
+    URLInputFile,
 )
 
 from ..chatlog import BOT as LOG_BOT, CLIENT as LOG_CLIENT, OPERATOR as LOG_OPERATOR, SYSTEM as LOG_SYSTEM, ChatLog
@@ -61,7 +65,8 @@ from ..menu import (
     CHANGE_LANGUAGE_LABEL, CHANGE_PHONE_LABEL, CHOOSE_LANGUAGE, END_LABEL, LANGUAGE_CHOICES, MENU_LABEL, OPERATOR_LABEL,
     QUICK_QUESTIONS, SETTINGS_LABEL, match_menu, quick_question,
 )
-from ..models import Audio, BotReply, Image, IncomingMessage, Lang
+from ..models import Audio, BotReply, Image, IncomingMessage, Lang, VideoAttachment
+from ..operators import OperatorStore
 from ..prompt import build_system_prompt
 from ..templates import t
 from ..pii import mask_pii
@@ -87,6 +92,8 @@ PROMPT_RE = re.compile(r"^(📝 Заметка о клиенте|✏️ Испр
 # What the chat log shows for a message without text.
 MEDIA_PLACEHOLDER = {"photo": "[фото]", "voice": "[голосовое сообщение]", "audio": "[аудио]",
                      "document": "[файл]", "text": ""}
+NOT_OPERATOR = ("Ответ не отправлен клиенту: вас нет в списке операторов. "
+                "Попросите администратора добавить вас в админ-боте.")
 
 
 def language_keyboard() -> InlineKeyboardMarkup:
@@ -167,6 +174,18 @@ def panel_keyboard() -> InlineKeyboardMarkup:
     ])
 
 
+def video_input(video: VideoAttachment, uploaded: dict[str, str]):
+    """What to pass to send_video: an uploaded copy's file_id, else the local file, else the URL."""
+    file_id = uploaded.get(video.id) or video.file_ids.get(CHANNEL)
+    if file_id:
+        return file_id
+    if video.path:
+        return FSInputFile(video.path)
+    if video.url:
+        return URLInputFile(video.url)
+    return None
+
+
 def message_text(message: Message) -> str:
     """The client's words: text for plain messages, caption for photos/documents/voice."""
     return (message.text or message.caption or "").strip()
@@ -197,7 +216,7 @@ def message_kind(message: Message) -> str:
 class TelegramSupportBot:
     def __init__(self, settings: Settings, engine: SupportEngine, users: UserStore | None = None,
                  handoffs: HandoffStore | None = None, feedback: FeedbackStore | None = None,
-                 chatlog: ChatLog | None = None):
+                 chatlog: ChatLog | None = None, operators: OperatorStore | None = None):
         self.settings = settings
         self.engine = engine
         self.users = users or UserStore(":memory:")
@@ -207,7 +226,11 @@ class TelegramSupportBot:
         self.feedback = feedback or FeedbackStore(":memory:")
         # Every message of every client chat, for support staff to read later.
         self.chatlog = chatlog or ChatLog(":memory:")
+        # Operators added by an admin; while the list is empty anyone in the support chat answers.
+        self.operators = operators or OperatorStore(":memory:")
         self._albums: MediaGroupCollector[tuple[Message, Bot]] | None = None
+        # Instruction video id -> Telegram file_id of the copy uploaded by this bot.
+        self._video_file_ids: dict[str, str] = {}
         self.router = Router()
         self._register()
 
@@ -515,6 +538,7 @@ class TelegramSupportBot:
         # A real answer is signed, so the client always sees who is talking: the assistant or a person.
         text = f"{t('assistant_name', reply.language)}:\n{reply.text}" if opens else reply.text
         await message.answer(text, reply_markup=markup)
+        await self._send_videos(message, reply)
         client_id = str(message.chat.id)
         handoff_id = await self._escalate(message, bot, reply, user) if reply.escalate else None
         if handoff_id is not None:
@@ -543,6 +567,21 @@ class TelegramSupportBot:
                              operator_name=operator_name, handoff_id=handoff_id, conversation_id=conversation_id)
         except Exception as e:  # the log must never break the conversation itself
             log.warning("chat log failed: %s", e)
+
+    async def _send_videos(self, message: Message, reply: BotReply) -> None:
+        """Instruction videos after the answer; a failed video never breaks the answer itself."""
+        for video in reply.videos:
+            media = video_input(video, self._video_file_ids)
+            if media is None:
+                continue
+            try:
+                sent = await message.answer_video(media, caption=video.title[:1024], supports_streaming=True)
+            except Exception as e:  # noqa: BLE001 - Telegram/network errors: the text answer is already sent
+                log.warning("video %s not sent: %s", video.id, e)
+                continue
+            if sent.video:
+                # Upload once: later clients get the same file by id.
+                self._video_file_ids[video.id] = sent.video.file_id
 
     async def _escalate(self, message: Message, bot: Bot, reply: BotReply, user=None) -> int | None:
         """Post the hand-off to the support chat; returns its id (None without a support chat)."""
@@ -588,10 +627,13 @@ class TelegramSupportBot:
         text = message.text or message.caption
         if handoff is None or not text:
             return
+        u = message.from_user
+        if not self.operators.may_answer(u.id if u else None):
+            await message.answer(NOT_OPERATOR)
+            return
         lang = _lang(handoff.language)
         await bot.send_message(int(handoff.client_chat_id), f"{t('operator_name', lang)}:\n{text}",
                                reply_markup=end_keyboard(lang))
-        u = message.from_user
         operator_id, operator_name = (str(u.id), u.full_name) if u else (None, None)
         conversation = self.feedback.operator_replied(CHANNEL, handoff.client_chat_id, handoff.id, lang.value,
                                                       operator_id, operator_name)
@@ -907,8 +949,9 @@ async def main() -> None:
     handoffs = HandoffStore(settings.db_path)
     feedback = FeedbackStore(settings.db_path)
     chatlog = ChatLog(settings.db_path)
+    operators = OperatorStore(settings.db_path)
     dp.include_router(TelegramSupportBot(settings, build_engine(settings, handoffs), users, handoffs, feedback,
-                                         chatlog).router)
+                                         chatlog, operators=operators).router)
     try:
         await set_commands(bot, settings.support_chat_id)
     except Exception as e:  # commands are a convenience; the bot works without them
