@@ -263,12 +263,16 @@ class AdminData:
 
 def _chat(m: dict) -> dict:
     """What the panel shows of a logged message."""
-    return {k: m[k] for k in ("id", "sender", "kind", "text", "operator_name", "created_at")}
+    out = {k: m[k] for k in ("id", "sender", "kind", "text", "operator_name", "created_at")}
+    # Only the count: the panel loads each file through /api/media/<message id>/<n>.
+    files = m.get("files")
+    out["files"] = len(files) if isinstance(files, list) else len(json.loads(files)) if files else 0
+    return out
 
 
 def _msg(sender: str, text: str, at: str, operator_name: str | None = None) -> dict:
     return {"id": None, "sender": sender, "kind": "text", "text": text, "operator_name": operator_name,
-            "created_at": at}
+            "created_at": at, "files": 0}
 
 
 def render_overview(o: dict) -> str:

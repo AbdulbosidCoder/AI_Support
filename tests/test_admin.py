@@ -326,3 +326,33 @@ def test_session_prefers_messages_saved_with_conversation_id(tmp_path):
     data = AdminData(db)
     assert [m["text"] for m in data.session(conv.id)["messages"]] == ["с id"]
     assert [m.text for m in log.for_client("telegram", "7")] == ["без id", "с id"]
+
+
+def test_client_photo_is_loaded_from_telegram_once(tmp_path):
+    db = tmp_path / "bot.sqlite3"
+    users, handoffs, feedback, log = stores(db)
+    conv = feedback.bot_answered("telegram", "7", "ru", "payments")
+    photo = log.add("telegram", "7", "client", "[фото]", kind="photo", files=["AgACfile"], conversation_id=conv.id)
+    calls = []
+
+    async def fetch(file_id):
+        calls.append(file_id)
+        return b"PNGDATA", "image/png"
+
+    app = create_app(AdminData(db), TOKEN, frozenset({ADMIN}), fetch=fetch)
+    chat, first, again, missing, stranger = api(
+        app, ("GET", f"/api/sessions/{conv.id}", ADMIN, None), ("GET", f"/api/media/{photo}/0", ADMIN, None),
+        ("GET", f"/api/media/{photo}/0", ADMIN, None), ("GET", f"/api/media/{photo}/1", ADMIN, None),
+        ("GET", f"/api/media/{photo}/0", 7, None))
+    message = chat[1]["messages"][0]
+    assert message["files"] == 1 and "AgACfile" not in json.dumps(chat[1])  # file ids stay on the server
+    assert first == (200, "PNGDATA") and again == (200, "PNGDATA") and calls == ["AgACfile"]
+    assert missing[0] == 404 and stranger[0] == 403
+
+
+def test_photo_without_client_bot_token_is_not_found(tmp_path):
+    db = tmp_path / "bot.sqlite3"
+    photo = ChatLog(db).add("telegram", "7", "client", "[фото]", kind="photo", files=["AgACfile"])
+    app = create_app(AdminData(db), TOKEN, frozenset({ADMIN}))
+    (status, body), = api(app, ("GET", f"/api/media/{photo}/0", ADMIN, None))
+    assert status == 404 and body["error"] == "no_token"

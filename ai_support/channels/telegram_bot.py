@@ -229,6 +229,16 @@ def image_source(message: Message):
     return None
 
 
+def media_files(messages: list[Message]) -> list[str]:
+    """Telegram file ids of the photos, voice messages, audio and files, for the admin panel's chat."""
+    out = []
+    for m in messages:
+        media = m.photo[-1] if m.photo else (m.voice or m.audio or m.document)
+        if media is not None:
+            out.append(media.file_id)
+    return out
+
+
 def message_kind(message: Message) -> str:
     if message.photo:
         return "photo"
@@ -588,7 +598,7 @@ class TelegramSupportBot:
         await bot.send_chat_action(first.chat.id, ChatAction.TYPING)
         msg = await self.to_incoming(messages, bot)
         reply = await self.engine.handle(msg)
-        await self._deliver(first, bot, reply, client_kind=message_kind(first))
+        await self._deliver(first, bot, reply, client_kind=message_kind(first), files=media_files(messages))
 
     async def _with_operator(self, first: Message, bot: Bot, messages: list[Message], text: str) -> bool:
         """While a person handles the conversation, the client's messages go to them, not to the model."""
@@ -602,7 +612,8 @@ class TelegramSupportBot:
             return False
         kind = message_kind(messages[0]) if messages else "text"
         masked = mask_pii(text)
-        self._log(client_id, LOG_CLIENT, masked or MEDIA_PLACEHOLDER[kind], kind, conversation.id, handoff.id)
+        self._log(client_id, LOG_CLIENT, masked or MEDIA_PLACEHOLDER[kind], kind, conversation.id, handoff.id,
+                  files=media_files(messages))
         posted = await bot.send_message(
             chat, f"💬 Клиент (эскалация #{handoff.id}): {masked or MEDIA_PLACEHOLDER[kind]}"[:4096],
             reply_to_message_id=int(handoff.support_message_id),
@@ -645,7 +656,8 @@ class TelegramSupportBot:
                               first.audio.file_name or "audio.mp3")
         return msg
 
-    async def _deliver(self, message: Message, bot: Bot, reply: BotReply, user=None, client_kind: str = "text") -> None:
+    async def _deliver(self, message: Message, bot: Bot, reply: BotReply, user=None, client_kind: str = "text",
+                       files: list[str] = ()) -> None:
         opens = opens_conversation(reply)
         markup = main_keyboard(reply.language) if reply.show_menu else (end_keyboard(reply.language) if opens else None)
         # A real answer is signed, so the client always sees who is talking: the assistant or a person.
@@ -667,20 +679,22 @@ class TelegramSupportBot:
         conversation_id = conversation.id if conversation else None
         if reply.client_text or client_kind != "text":
             self._log(client_id, LOG_CLIENT, reply.client_text or MEDIA_PLACEHOLDER[client_kind], client_kind,
-                      conversation_id, handoff_id)
+                      conversation_id, handoff_id, files=files)
         self._log(client_id, LOG_BOT, reply.text, "text", conversation_id, handoff_id)
         if handoff_id is not None:
             self._log(client_id, LOG_SYSTEM, f"Передано специалисту: {reply.escalation_reason or '-'}", "text",
                       conversation_id, handoff_id)
 
     def _log(self, client_id: str, sender: str, text: str, kind: str = "text", conversation_id: int | None = None,
-             handoff_id: int | None = None, operator_id: str | None = None, operator_name: str | None = None) -> None:
+             handoff_id: int | None = None, operator_id: str | None = None, operator_name: str | None = None,
+             files: list[str] = ()) -> None:
         if conversation_id is None and sender != LOG_SYSTEM:
             conversation = self.feedback.conversation(CHANNEL, client_id)
             conversation_id = conversation.id if conversation else None
         try:
             self.chatlog.add(CHANNEL, client_id, sender, text, kind, operator_id=operator_id,
-                             operator_name=operator_name, handoff_id=handoff_id, conversation_id=conversation_id)
+                             operator_name=operator_name, handoff_id=handoff_id, conversation_id=conversation_id,
+                             files=files)
         except Exception as e:  # the log must never break the conversation itself
             log.warning("chat log failed: %s", e)
 

@@ -14,3 +14,11 @@ def test_messages_saved_in_order_and_masked(tmp_path):
     assert [m.text for m in log.for_client("telegram", "42", limit=1)] == [""]
     # Survives a restart (same file).
     assert len(ChatLog(tmp_path / "bot.sqlite3").for_client("telegram", "42")) == 3
+
+
+def test_file_ids_are_kept_with_the_message():
+    log = ChatLog(":memory:")
+    photo = log.add("telegram", "42", "client", "[фото]", kind="photo", files=["f1", "f2"])
+    text = log.add("telegram", "42", "client", "salom")
+    assert log.files(photo) == ["f1", "f2"] and log.files(text) == [] and log.files(999) == []
+    assert log.for_client("telegram", "42")[0].files == ["f1", "f2"]

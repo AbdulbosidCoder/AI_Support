@@ -27,7 +27,8 @@ async def main() -> None:
     if not settings.admin_domain:
         log.warning("ADMIN_DOMAIN is not set: the bot works, but the web panel button is hidden")
     data = AdminData(settings.db_path)
-    runner = web.AppRunner(create_app(data, settings.admin_bot_token, settings.admin_ids))
+    runner = web.AppRunner(create_app(data, settings.admin_bot_token, settings.admin_ids,
+                                       settings.telegram_token))
     await runner.setup()
     await web.TCPSite(runner, "0.0.0.0", settings.admin_port).start()
     log.info("admin panel on port %s, public address %s", settings.admin_port, settings.admin_url or "-")
