@@ -47,6 +47,41 @@
   .btn.ghost { background: var(--bg2); color: var(--text); }
   form.add { display: grid; gap: 8px; background: var(--bg); padding: 12px; border-radius: 12px; margin-top: 10px; }
   h2 { font-size: 17px; margin: 16px 0 6px; }
+  /* Statistics: one accent hue for every bar, values in text colors. */
+  .panel { background: var(--bg); border-radius: 12px; padding: 12px; margin-top: 10px; }
+  .panel h3 { margin: 0 0 10px; font-size: 15px; }
+  .panel .sub { color: var(--hint); font-size: 12px; font-weight: 400; margin-left: 6px; }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 8px; }
+  .kpi b { display: block; font-size: 20px; font-variant-numeric: tabular-nums; }
+  .kpi span { color: var(--hint); font-size: 12px; }
+  .cols { display: flex; align-items: flex-end; gap: 3px; height: 120px; padding-top: 16px; position: relative; }
+  .cols .c { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: flex-end; height: 100%;
+             cursor: default; position: relative; }
+  .cols .c i { display: block; background: var(--accent); border-radius: 4px 4px 0 0; min-height: 2px; }
+  .cols .c.zero i { background: var(--line); }
+  .cols .c:hover i, .cols .c:focus i { filter: brightness(1.15); }
+  .cols .c .tip { display: none; position: absolute; bottom: calc(100% + 4px); left: 50%; transform: translateX(-50%);
+                  background: var(--text); color: var(--bg); font-size: 12px; padding: 4px 8px; border-radius: 8px;
+                  white-space: nowrap; z-index: 2; pointer-events: none; }
+  .cols .c:hover .tip, .cols .c:focus .tip { display: block; }
+  .cols .c:first-child .tip { left: 0; transform: none; }
+  .cols .c:last-child .tip { left: auto; right: 0; transform: none; }
+  .axis { display: flex; justify-content: space-between; color: var(--hint); font-size: 11px; margin-top: 4px;
+          border-top: 1px solid var(--line); padding-top: 4px; }
+  .hbars { display: grid; gap: 6px; }
+  .hbar { display: grid; grid-template-columns: minmax(70px, 34%) 1fr auto; gap: 8px; align-items: center; font-size: 13px; }
+  .hbar .lbl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hbar .track { height: 10px; background: var(--bg2); border-radius: 5px; overflow: hidden; }
+  .hbar .track i { display: block; height: 100%; background: var(--accent); border-radius: 5px; min-width: 2px; }
+  .hbar .val { color: var(--hint); font-variant-numeric: tabular-nums; min-width: 22px; text-align: right; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { background: var(--bg2); border-radius: 10px; padding: 4px 10px; font-size: 13px; }
+  .chip b { font-variant-numeric: tabular-nums; }
+  .two { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; }
+  .two > .panel { margin-top: 0; }
+  .profile { display: flex; gap: 12px; align-items: center; }
+  .profile .grow { min-width: 0; }
+  .profile b { font-size: 17px; }
   /* The session chat looks like a Telegram chat: wallpaper, bubbles with tails, date and service pills. */
   .tgchat { --wall: #b9d1a1; --wall2: #dfe8b8; --in: #ffffff; --out: #e1fec6; --meta: #8a9aa6; --meta-out: #5fa65a;
             --name: #3a8fd8; --ink: #000000; --service: rgba(40, 60, 40, .42); --doodle: rgba(70, 110, 60, .10); }
@@ -186,11 +221,68 @@ async function overview() {
     ${card(score(o.rating_operators), `рейтинг операторов · ${o.rating_operators.count}`)}
     ${card(o.operators_active, "активных операторов")}
   </div>
-  <h2>Ждут оператора</h2><div id="waiting" class="list"></div>`;
+  <h2>Ждут оператора</h2><div id="waiting" class="list"></div><div id="stats"></div>`;
   const open = (await api("/api/sessions?status=open&limit=50")).filter(s => s.escalated && !s.operator_id);
   document.getElementById("waiting").innerHTML = open.length ? open.map(sessionRow).join("")
     : '<div class="empty">Никто не ждёт</div>';
+  document.getElementById("stats").innerHTML = await statsSection();
   timer = setInterval(() => overview().catch(fail), 15000);
+}
+
+const TONE = {polite: "вежливо", calm: "спокойно", rude: "грубо"};
+const LEVEL = {A: "A · вежливые", B: "B · обычные", C: "C · требуют внимания"};
+const SENDER = {client: "от клиента", bot: "от бота", operator: "от операторов", system: "событий"};
+const shortDay = d => new Date(d + "T00:00:00").toLocaleDateString("ru-RU", {day: "numeric", month: "short"});
+
+function kpis(items) {
+  return `<div class="kpis">${items.map(([v, label]) => `<div class="kpi"><b>${esc(v)}</b><span>${label}</span></div>`).join("")}</div>`;
+}
+
+function hbars(rows, empty = "Нет данных") {
+  const max = Math.max(1, ...rows.map(r => r.count));
+  return rows.length ? `<div class="hbars">${rows.map(r => `<div class="hbar"><span class="lbl" title="${esc(r.name)}">${esc(r.name)}</span>
+    <span class="track"><i style="width:${(100 * r.count / max).toFixed(1)}%"></i></span><span class="val">${r.count}</span></div>`).join("")}</div>`
+    : `<div class="muted">${empty}</div>`;
+}
+
+function stars(score) {
+  const rows = ["5", "4", "3", "2", "1"].map(k => ({name: "★".repeat(+k), count: score.by_stars[k] || 0}));
+  const extra = [score.no_answer ? `без ответа: ${score.no_answer}` : "", score.not_helped ? `не помогли: ${score.not_helped}` : ""]
+    .filter(Boolean).join(" · ");
+  return `${hbars(rows)}<div class="muted" style="margin-top:6px">${score.count ? `средняя ${score.average}★ · ${score.count} оценок` : "оценок пока нет"}${extra ? " · " + extra : ""}</div>`;
+}
+
+function chips(obj, labels = {}) {
+  const items = Object.entries(obj).filter(([, n]) => n);
+  return items.length ? `<div class="chips">${items.map(([k, n]) => `<span class="chip">${esc(labels[k] || k)} <b>${n}</b></span>`).join("")}</div>`
+    : '<div class="muted">Нет данных</div>';
+}
+
+function daily(rows) {
+  const max = Math.max(1, ...rows.map(r => r.sessions));
+  const total = rows.reduce((a, r) => a + r.sessions, 0);
+  return `<div class="cols" role="img" aria-label="Сессии по дням, всего ${total}">${rows.map(r =>
+    `<div class="c${r.sessions ? "" : " zero"}" tabindex="0"><i style="height:${(100 * r.sessions / max).toFixed(1)}%"></i>
+      <span class="tip">${shortDay(r.day)}: сессий ${r.sessions}, передано ${r.handoffs}, новых клиентов ${r.clients}</span></div>`).join("")}</div>
+    <div class="axis"><span>${shortDay(rows[0].day)}</span><span>макс. ${max} в день</span><span>${shortDay(rows.at(-1).day)}</span></div>`;
+}
+
+async function statsSection() {
+  const st = await api("/api/stats?days=14");
+  const msgs = Object.entries(st.messages_by).map(([k, n]) => `${n} ${SENDER[k] || k}`).join(", ");
+  return `<h2>Общая статистика</h2>
+    <div class="panel">${kpis([[st.clients, "клиентов"], [st.sessions, "сессий всего"], [st.escalated, "передано операторам"],
+      [st.escalation_rate + "%", "доля передач"], [st.messages, "сообщений"], [st.media, "фото и голосовых"]])}
+      <div class="muted" style="margin-top:8px">${esc(msgs || "Сообщений пока нет")}</div></div>
+    <div class="panel"><h3>Сессии по дням <span class="sub">последние 14 дней</span></h3>${daily(st.daily)}</div>
+    <div class="two">
+      <div class="panel"><h3>Темы обращений</h3>${hbars(st.topics)}</div>
+      <div class="panel"><h3>Языки</h3>${chips(st.languages, LANG)}
+        <h3 style="margin-top:14px">Уровни клиентов</h3>${chips(st.levels, LEVEL)}
+        <h3 style="margin-top:14px">Тон клиентов</h3>${chips(st.tones, TONE)}</div>
+      <div class="panel"><h3>Оценки бота</h3>${stars(st.rating_bot)}</div>
+      <div class="panel"><h3>Оценки операторов</h3>${stars(st.rating_operators)}</div>
+    </div>`;
 }
 
 function sessionRow(s) {
@@ -369,9 +461,26 @@ async function clients() {
 }
 
 async function client(id) {
-  const list = await api("/api/sessions?" + new URLSearchParams({client: id, limit: 200}));
+  const [st, list] = await Promise.all([api(`/api/clients/${encodeURIComponent(id)}/stats`),
+    api("/api/sessions?" + new URLSearchParams({client: id, limit: 200}))]);
+  const m = st.messages_by;
   view.innerHTML = `<button class="back" onclick="history.back()">‹ Назад</button>
-    <h2>${esc(list[0] ? list[0].client_name : id)}</h2>
+    <div class="panel profile">
+      <div class="avatar" style="background:${AVATAR[Math.abs(parseInt(st.client_id, 10) || 0) % AVATAR.length]}">${esc(initials(st.name))}</div>
+      <div class="grow"><b>${esc(st.name)}</b> ${st.username ? '<span class="muted">@' + esc(st.username) + "</span>" : ""}
+        <div class="muted">${[st.phone, LANG[st.language] || st.language, "id " + st.client_id].filter(Boolean).map(esc).join(" · ")}</div>
+        <div class="muted">с ${esc(when(st.first_seen))}${st.last_message ? " · последнее сообщение " + esc(when(st.last_message)) : ""}</div></div>
+    </div>
+    <div class="panel">${kpis([[st.sessions, "сессий"], [st.sessions_open, "открыто"], [st.escalated, "передано операторам"],
+      [m.client || 0, "сообщений клиента"], [st.media, "фото и голосовых"],
+      [st.rating_average !== null ? st.rating_average + "★" : "—", `оценка · ${st.ratings}`]])}
+      <div class="muted" style="margin-top:8px">Уровень: ${esc(st.level)}${Object.keys(st.tones).length ? " · тон: " +
+        Object.entries(st.tones).map(([k, n]) => `${TONE[k] || k} ${n}`).join(", ") : ""} · ответов бота ${m.bot || 0}, операторов ${m.operator || 0}</div></div>
+    <div class="two">
+      <div class="panel"><h3>Темы обращений</h3>${hbars(st.topics)}</div>
+      <div class="panel"><h3>Операторы</h3>${hbars(st.operators, "Только бот, без операторов")}</div>
+    </div>
+    <h2>Сессии</h2>
     <div class="list">${list.map(sessionRow).join("") || '<div class="empty">Сессий нет</div>'}</div>`;
 }
 

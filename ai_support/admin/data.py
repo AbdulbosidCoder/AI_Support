@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from ..chatlog import BOT, CLIENT, OPERATOR, SYSTEM, ChatLog
@@ -72,6 +72,93 @@ class AdminData:
             "operators_pending": count("SELECT COUNT(*) FROM operators WHERE active = 1 AND user_id IS NULL"),
             "rating_bot": {"average": bot.average, "count": bot.count},
             "rating_operators": {"average": op.average, "count": op.count},
+        }
+
+    def stats(self, days: int = 14) -> dict:
+        """The whole service: totals, sessions per day, topics, languages, ratings and client levels."""
+        count = lambda sql, *a: self._one(sql, a)[0] or 0  # noqa: E731
+        start = datetime.now(timezone.utc).date() - timedelta(days=days - 1)
+        per_day = {r["d"]: r for r in self._all(
+            """SELECT substr(opened_at, 1, 10) AS d, COUNT(*) AS sessions, SUM(handoff_id IS NOT NULL) AS handoffs
+               FROM conversations WHERE opened_at >= ? GROUP BY d""", (start.isoformat(),))}
+        new_clients = {r["d"]: r["n"] for r in self._all(
+            "SELECT substr(created_at, 1, 10) AS d, COUNT(*) AS n FROM users WHERE created_at >= ? GROUP BY d",
+            (start.isoformat(),))}
+        daily = []
+        for i in range(days):
+            d = (start + timedelta(days=i)).isoformat()
+            r = per_day.get(d)
+            daily.append({"day": d, "sessions": r["sessions"] if r else 0,
+                          "handoffs": (r["handoffs"] or 0) if r else 0, "clients": new_clients.get(d, 0)})
+        sessions = count("SELECT COUNT(*) FROM conversations")
+        escalated = count("SELECT COUNT(*) FROM conversations WHERE handoff_id IS NOT NULL")
+        bot, op = self.feedback.score("bot"), self.feedback.score("operator")
+        return {
+            "clients": count("SELECT COUNT(*) FROM users"),
+            "sessions": sessions,
+            "sessions_closed": count("SELECT COUNT(*) FROM conversations WHERE status = 'closed'"),
+            "escalated": escalated,
+            "escalation_rate": round(100 * escalated / sessions) if sessions else 0,
+            "messages": count("SELECT COUNT(*) FROM chat_messages"),
+            "messages_by": _counts(self._all("SELECT sender AS k, COUNT(*) AS n FROM chat_messages GROUP BY sender")),
+            "media": count("SELECT COUNT(*) FROM chat_messages WHERE sender = 'client' AND kind != 'text'"),
+            "daily": daily,
+            "topics": _top(self._all(
+                """SELECT COALESCE(NULLIF(topic, ''), '—') AS k, COUNT(*) AS n FROM conversations
+                   GROUP BY k ORDER BY n DESC LIMIT 10""")),
+            "languages": _counts(self._all("SELECT language AS k, COUNT(*) AS n FROM conversations GROUP BY language")),
+            "rating_bot": _score(bot),
+            "rating_operators": _score(op),
+            "levels": self.feedback.level_counts(),
+            "tones": self.feedback.tone_counts(),
+        }
+
+    def client_stats(self, client_id: str, channel: str = "telegram") -> dict | None:
+        """One client: who they are, their sessions, messages, topics, operators and ratings."""
+        cols = self._user_columns()
+        user = self._one(f"""SELECT chat_id, username, full_name, language, created_at,
+                                    {"phone" if "phone" in cols else "NULL"} AS phone
+                             FROM users WHERE channel = ? AND chat_id = ?""", (channel, client_id))
+        sessions = self._one(
+            """SELECT COUNT(*) AS total, SUM(status = 'open') AS open, SUM(handoff_id IS NOT NULL) AS escalated,
+                      MIN(opened_at) AS first FROM conversations WHERE channel = ? AND client_id = ?""",
+            (channel, client_id))
+        if user is None and not sessions["total"]:
+            return None
+        where = (channel, client_id)
+        ratings = self._all("""SELECT target, stars, outcome FROM rating_requests
+                               WHERE channel = ? AND client_id = ? AND status = 'rated'""", where)
+        level = self.feedback.level(channel, client_id)
+        tones = self.feedback.tones(channel, client_id)
+        last = self._one("SELECT MAX(created_at) FROM chat_messages WHERE channel = ? AND client_id = ?", where)[0]
+        return {
+            "client_id": client_id,
+            "name": (user["full_name"] or user["username"] or client_id) if user else client_id,
+            "username": user["username"] if user else None,
+            "phone": user["phone"] if user else None,
+            "language": user["language"] if user else None,
+            "first_seen": (user["created_at"] if user else None) or sessions["first"],
+            "last_message": last,
+            "sessions": sessions["total"] or 0,
+            "sessions_open": sessions["open"] or 0,
+            "escalated": sessions["escalated"] or 0,
+            "messages_by": _counts(self._all(
+                "SELECT sender AS k, COUNT(*) AS n FROM chat_messages WHERE channel = ? AND client_id = ? GROUP BY sender",
+                where)),
+            "media": self._one("""SELECT COUNT(*) FROM chat_messages WHERE channel = ? AND client_id = ?
+                                  AND sender = 'client' AND kind != 'text'""", where)[0],
+            "topics": _top(self._all(
+                """SELECT COALESCE(NULLIF(topic, ''), '—') AS k, COUNT(*) AS n FROM conversations
+                   WHERE channel = ? AND client_id = ? GROUP BY k ORDER BY n DESC LIMIT 10""", where)),
+            "operators": _top(self._all(
+                """SELECT COALESCE(operator_name, operator_id) AS k, COUNT(*) AS n FROM conversations
+                   WHERE channel = ? AND client_id = ? AND operator_id IS NOT NULL GROUP BY k ORDER BY n DESC""",
+                where)),
+            "ratings": len(ratings),
+            "rating_average": round(sum(r["stars"] for r in ratings) / len(ratings), 1) if ratings else None,
+            "ratings_by_stars": {str(st): sum(r["stars"] == st for r in ratings) for st in range(5, 0, -1)},
+            "level": level.label,
+            "tones": {t: tones.count(t) for t in sorted(set(tones))},
         }
 
     # --- operators ---------------------------------------------------------------------------
@@ -268,6 +355,19 @@ def _chat(m: dict) -> dict:
     files = m.get("files")
     out["files"] = len(files) if isinstance(files, list) else len(json.loads(files)) if files else 0
     return out
+
+
+def _counts(rows) -> dict:
+    return {r["k"]: r["n"] for r in rows}
+
+
+def _top(rows) -> list[dict]:
+    return [{"name": r["k"], "count": r["n"]} for r in rows]
+
+
+def _score(score) -> dict:
+    return {"average": score.average, "count": score.count, "by_stars": {str(k): v for k, v in score.by_stars.items()},
+            "no_answer": score.no_answer, "not_helped": score.not_helped}
 
 
 def _msg(sender: str, text: str, at: str, operator_name: str | None = None) -> dict:

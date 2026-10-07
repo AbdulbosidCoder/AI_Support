@@ -65,6 +65,16 @@ async def overview(request: web.Request) -> web.Response:
     return _json(request.app[DATA].overview())
 
 
+async def stats(request: web.Request) -> web.Response:
+    days = _int(request.query.get("days"), 14)
+    return _json(request.app[DATA].stats(max(1, min(days, 90))))
+
+
+async def client_stats(request: web.Request) -> web.Response:
+    found = request.app[DATA].client_stats(request.match_info["id"])
+    return _json(found) if found else _json({"error": "not_found"}, 404)
+
+
 async def operators(request: web.Request) -> web.Response:
     return _json(request.app[DATA].operator_list())
 
@@ -201,6 +211,8 @@ def create_app(data: AdminData, bot_token: str, admin_ids: frozenset[int], clien
     app.router.add_post("/api/operators/{key}/active", set_operator_active)
     app.router.add_get("/api/sessions", sessions)
     app.router.add_get("/api/sessions/{id}", session)
+    app.router.add_get("/api/stats", stats)
     app.router.add_get("/api/clients", clients)
+    app.router.add_get("/api/clients/{id}/stats", client_stats)
     app.router.add_get("/api/media/{id}/{n}", media)
     return app
