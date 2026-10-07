@@ -25,10 +25,40 @@
         "Полностью закройте приложение, откройте его снова и пройдите идентификацию ещё раз.",
         "Проверьте, что интернет стабильный; отключите VPN.",
         "Разрешите приложению доступ к камере: Настройки телефона → Приложения → Xonsaroy Pay → Разрешения → Камера.",
-        "Делайте селфи при хорошем освещении, без очков и головного убора, лицо целиком в рамке."
+        "Делайте селфи при хорошем освещении, без очков и головного убора, лицо целиком в рамке.",
+        "Проверьте требования к идентификации (тема registration/identification): номер, SIM-карта, документ, паспортные данные и лицо должны принадлежать одному человеку."
       ],
       "escalate_if": "Загрузка не завершается или идентификация не проходит после повторных попыток: обращение передаётся в технический отдел. Причины отказа MyID бот не комментирует.",
       "source": "screenshots+call_center_cases",
+      "status": "draft"
+    },
+    {
+      "section": "registration",
+      "id": "identification",
+      "title": "Не получается пройти идентификацию в приложении Xonsaroy Pay: требования",
+      "answer_steps": [
+        "Номер телефона должен быть оформлен на ваше имя.",
+        "SIM-карта с этим номером должна стоять в телефоне, с которого вы проходите регистрацию.",
+        "Паспорт или ID-карта должны принадлежать вам.",
+        "Паспортные данные нужно ввести в приложение правильно, точно как в документе.",
+        "Подтверждение лица проходит сам владелец паспорта/ID-карты.",
+        "Важно: номер телефона, паспортные данные и лицо должны принадлежать одному человеку.",
+        "Если проблема с идентификацией остаётся, обратитесь в Call-центр Xonsaroy Pay или попросите здесь передать обращение сотруднику поддержки.",
+        "Не присылайте в чат паспортные данные, ПИНФЛ и фото документа."
+      ],
+      "official_text": {
+        "uz_latn": "Xonsaroy Pay ilovasida identifikatsiyadan muvaffaqiyatli o‘tish uchun: 1) Telefon raqami — o‘z nomingizga rasmiylashtirilgan bo‘lishi kerak. 2) SIM-karta — ro‘yxatdan o‘tish amalga oshirilayotgan telefonda bo‘lishi kerak. 3) Pasport yoki ID-karta — o‘zingizga tegishli bo‘lishi kerak. 4) Pasport ma’lumotlari — ilovaga to‘g‘ri va hujjatdagi ma’lumotlarga mos kiritilishi kerak. 5) Yuzni tasdiqlash — pasport/ID-karta egasining o‘zi tomonidan amalga oshirilishi kerak. Muhim: Telefon raqami, pasport ma’lumotlari va yuz bir shaxsga tegishli bo‘lishi kerak. Agar identifikatsiyadan o‘tishda muammo yuzaga kelsa, Xonsaroy Pay Call-markaziga murojaat qilishingiz mumkin.",
+        "uz_cyrl": "Xonsaroy Pay иловасида идентификациядан муваффақиятли ўтиш учун: 1) Телефон рақами — ўз номингизга расмийлаштирилган бўлиши керак. 2) SIM-карта — рўйхатдан ўтиш амалга оширилаётган телефонда бўлиши керак. 3) Паспорт ёки ID-карта — ўзингизга тегишли бўлиши керак. 4) Паспорт маълумотлари — иловага тўғри ва ҳужжатдаги маълумотларга мос киритилиши керак. 5) Юзни тасдиқлаш — паспорт/ID-карта эгасининг ўзи томонидан амалга оширилиши керак. Муҳим: Телефон рақами, паспорт маълумотлари ва юз бир шахсга тегишли бўлиши керак. Агар идентификациядан ўтишда муаммо юзага келса, Xonsaroy Pay Call-марказига мурожаат қилишингиз мумкин.",
+        "ru": "Чтобы успешно пройти идентификацию в приложении Xonsaroy Pay: 1) Номер телефона должен быть оформлен на ваше имя. 2) SIM-карта должна находиться в телефоне, с которого проходит регистрация. 3) Паспорт или ID-карта должны принадлежать вам. 4) Паспортные данные нужно ввести в приложение правильно и в точном соответствии с документом. 5) Подтверждение лица должен проходить сам владелец паспорта/ID-карты. Важно: номер телефона, паспортные данные и лицо должны принадлежать одному человеку. Если при прохождении идентификации возникла проблема, вы можете обратиться в Call-центр Xonsaroy Pay.",
+        "en": "To pass identification in the Xonsaroy Pay app: 1) The phone number must be registered in your name. 2) The SIM card must be in the phone you are registering on. 3) The passport or ID card must belong to you. 4) Passport details must be entered in the app correctly, exactly as in the document. 5) Face verification must be done by the passport/ID card holder in person. Important: the phone number, passport details and face must belong to the same person. If you have a problem passing identification, you can contact the Xonsaroy Pay call center."
+      },
+      "escalate_if": "Клиент выполнил все требования, а идентификация всё равно не проходит, или клиент просит связаться с сотрудником. Причины отказа идентификации бот не комментирует и не называет.",
+      "forbidden": [
+        "Не называть причины отказа идентификации и не утверждать, чьи данные не совпали.",
+        "Не обещать, что идентификация пройдёт, и не подтверждать её успешное прохождение.",
+        "Не просить прислать паспортные данные, ПИНФЛ или фото документа в чат."
+      ],
+      "source": "team_instruction_2026-10-07",
       "status": "draft"
     },
     {
