@@ -87,21 +87,24 @@ OPERATOR_LABEL = {Lang.UZ_LATN: "👨‍💼 Operator", Lang.UZ_CYRL: "👨‍�
                   Lang.RU: "👨‍💼 Оператор", Lang.EN: "👨‍💼 Operator"}
 SETTINGS_LABEL = {Lang.UZ_LATN: "⚙️ Sozlamalar", Lang.UZ_CYRL: "⚙️ Созламалар",
                   Lang.RU: "⚙️ Настройки", Lang.EN: "⚙️ Settings"}
+END_LABEL = {Lang.UZ_LATN: "✅ Suhbatni yakunlash", Lang.UZ_CYRL: "✅ Суҳбатни якунлаш",
+             Lang.RU: "✅ Завершить разговор", Lang.EN: "✅ End conversation"}
 CHANGE_LANGUAGE_LABEL = {Lang.UZ_LATN: "🌐 Tilni o'zgartirish", Lang.UZ_CYRL: "🌐 Тилни ўзгартириш",
                          Lang.RU: "🌐 Изменить язык", Lang.EN: "🌐 Change language"}
 
 
 @dataclass(frozen=True)
 class MenuAction:
-    kind: str  # "question" | "operator" | "settings"
+    kind: str  # "question" | "operator" | "settings" | "end"
     question: QuickQuestion | None = None
 
 
 def menu_rows(lang: Lang) -> list[list[str]]:
-    """Main menu button labels, two per row; the last row is operator and settings."""
+    """Main menu button labels, two per row; then operator and settings, and "end conversation" last."""
     labels = [q.label[lang] for q in QUICK_QUESTIONS]
     rows = [labels[i:i + 2] for i in range(0, len(labels), 2)]
     rows.append([OPERATOR_LABEL[lang], SETTINGS_LABEL[lang]])
+    rows.append([END_LABEL[lang]])
     return rows
 
 
@@ -118,6 +121,8 @@ def match_menu(text: str) -> MenuAction | None:
         return MenuAction("operator")
     if text in SETTINGS_LABEL.values():
         return MenuAction("settings")
+    if text in END_LABEL.values():
+        return MenuAction("end")
     for q in QUICK_QUESTIONS:
         if text in q.label.values():
             return MenuAction("question", q)

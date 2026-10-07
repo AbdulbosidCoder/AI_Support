@@ -8,9 +8,10 @@ and the bot relays the reply to the client. Escalations and operator replies are
 (ai_support/handoffs.py); an operator answer becomes a knowledge-base candidate, and operators
 approve or reject candidates in the support chat with /candidates, /approve and /reject.
 
-Ratings (ai_support/feedback.py): after a bot answer the client rates the bot; once the case reached
-an operator, every operator reply asks the client to rate the operator instead (only the latest
-request keeps its buttons). The escalation post carries the AI's assessment of the client and buttons
+Ratings (ai_support/feedback.py): a bot answer or a hand-off opens a conversation. It ends when the
+client taps "End conversation" (main menu, mini menu, the button under answers, or /end) or the
+operator ends it (button under the escalation post, or /end as a reply to it). Then the client rates
+it once: the bot if it never reached a person, otherwise the operator. The escalation post carries the AI's assessment of the client and buttons
 for the operator's own assessment (polite / calm / rude); /client adds the operator's note and /rating
 shows the anonymous app-store style rating. Assessments and levels never reach the client.
 """
@@ -36,12 +37,12 @@ from ..config import Settings
 from ..engine import SupportEngine
 from ..factory import build_engine, load_knowledge
 from ..feedback import (
-    BOT, OPERATOR, TONE_LABELS, TONES, Assessment, FeedbackStore, RatingError, RatingRequest, asks_bot_rating,
-    client_level, render_assessment, render_rating,
+    BOT, OPERATOR, TONE_LABELS, TONES, Assessment, FeedbackStore, RatingError, RatingRequest, client_level,
+    opens_conversation, render_assessment, render_rating,
 )
 from ..handoffs import Candidate, HandoffStore, ReviewError
 from ..menu import (
-    CHANGE_LANGUAGE_LABEL, CHOOSE_LANGUAGE, LANGUAGE_CHOICES, QUICK_QUESTIONS, match_menu, menu_rows, quick_question,
+    CHANGE_LANGUAGE_LABEL, CHOOSE_LANGUAGE, END_LABEL, LANGUAGE_CHOICES, QUICK_QUESTIONS, match_menu, menu_rows, quick_question,
 )
 from ..models import Audio, BotReply, Image, IncomingMessage, Lang
 from ..prompt import build_system_prompt
@@ -58,6 +59,8 @@ CHANNEL = "telegram"
 PREVIEW_CHARS = 700
 CLIENT_NOTE_HELP = ("Ответьте на пост эскалации: /client <суть проблемы> | <предложения клиента>. "
                     "Тон клиента — кнопками под постом.")
+END_HELP = "Ответьте /end на пост эскалации или нажмите «✅ Завершить разговор» под ним."
+OPERATOR_END_LABEL = "✅ Завершить разговор"
 TONE_BUTTONS = {"polite": "😊 Вежливо", "calm": "😐 Спокойно", "rude": "😠 Грубо"}
 REVIEW_HELP = (
     "/approve N — добавить в базу знаний как есть\n"
@@ -79,10 +82,15 @@ def settings_keyboard(lang: Lang) -> InlineKeyboardMarkup:
 
 
 def quick_keyboard(lang: Lang) -> InlineKeyboardMarkup:
-    """Mini menu under a message: the common questions, one tap each."""
+    """Mini menu under a message: the common questions, one tap each, and "end conversation"."""
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=q.label[lang], callback_data=f"q:{q.id}")] for q in QUICK_QUESTIONS
-    ])
+    ] + [[InlineKeyboardButton(text=END_LABEL[lang], callback_data="end")]])
+
+
+def end_keyboard(lang: Lang) -> InlineKeyboardMarkup:
+    """Under answers in an open conversation: the client ends it here and is then asked to rate it."""
+    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=END_LABEL[lang], callback_data="end")]])
 
 
 def rating_keyboard(request: RatingRequest, lang: Lang) -> InlineKeyboardMarkup:
@@ -98,6 +106,7 @@ def tone_keyboard() -> InlineKeyboardMarkup:
     """Under an escalation post: the operator's assessment of how the client talked."""
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=TONE_BUTTONS[tone], callback_data=f"ctone:{tone}") for tone in TONES],
+        [InlineKeyboardButton(text=OPERATOR_END_LABEL, callback_data="hend")],
     ])
 
 
@@ -144,9 +153,11 @@ class TelegramSupportBot:
             # Commands first: a /client note is itself a reply to the escalation post.
             r.message.register(self.on_client_note, F.chat.id == support, Command("client"))
             r.message.register(self.on_rating, F.chat.id == support, Command("rating"))
+            r.message.register(self.on_operator_end, F.chat.id == support, Command("end"), self.is_handoff_reply)
             r.message.register(self.on_operator_reply, F.chat.id == support, self.is_handoff_reply)
             r.callback_query.register(self.on_client_tone, F.data.startswith("ctone:"),
                                       F.message.chat.id == support)
+            r.callback_query.register(self.on_operator_end_button, F.data == "hend", F.message.chat.id == support)
             r.message.register(self.on_candidates, F.chat.id == support, Command("candidates"))
             r.message.register(self.on_approve, F.chat.id == support, Command("approve"))
             r.message.register(self.on_reject, F.chat.id == support, Command("reject"))
@@ -158,11 +169,13 @@ class TelegramSupportBot:
         r.message.register(self.on_start, CommandStart())
         r.message.register(self.on_operator_command, Command("operator"))
         r.message.register(self.on_language_command, Command("language"))
+        r.message.register(self.on_end_command, Command("end"))
         r.message.register(self.on_client_message, F.chat.type == "private")
         r.callback_query.register(self.on_language_chosen, F.data.startswith("lang:"))
         r.callback_query.register(self.on_change_language, F.data == "settings:language")
         r.callback_query.register(self.on_quick_question, F.data.startswith("q:"))
         r.callback_query.register(self.on_rate, F.data.startswith("rate:"))
+        r.callback_query.register(self.on_end_button, F.data == "end")
 
     async def ignore(self, message: Message) -> None:
         return None
@@ -263,6 +276,8 @@ class TelegramSupportBot:
             await self._deliver(message, bot, self.engine.handoff(str(message.chat.id), user.lang))
         elif action.kind == "settings":
             await message.answer(t("settings", user.lang), reply_markup=settings_keyboard(user.lang))
+        elif action.kind == "end":
+            await self._client_ends(bot, message.chat.id, user.lang)
         else:
             # A quick question is answered as if the client typed it, in their chosen language.
             await bot.send_chat_action(message.chat.id, ChatAction.TYPING)
@@ -304,38 +319,23 @@ class TelegramSupportBot:
         return msg
 
     async def _deliver(self, message: Message, bot: Bot, reply: BotReply, user=None) -> None:
-        await message.answer(reply.text, reply_markup=quick_keyboard(reply.language) if reply.show_menu else None)
+        opens = opens_conversation(reply)
+        markup = quick_keyboard(reply.language) if reply.show_menu else (end_keyboard(reply.language) if opens else None)
+        await message.answer(reply.text, reply_markup=markup)
         client_id = str(message.chat.id)
-        if reply.escalate:
-            # The case goes to a person: the operator is rated for it, not the bot.
-            await self._remove_prompts(bot, self.feedback.case_escalated(CHANNEL, client_id))
-            await self._escalate(message, bot, reply, user)
-        elif asks_bot_rating(reply):
-            request, replaced = self.feedback.ask(CHANNEL, client_id, BOT, reply.language.value, reply.topic)
-            await self._remove_prompts(bot, replaced)
-            prompt = await message.answer(t("rate_bot", reply.language), reply_markup=rating_keyboard(request, reply.language))
-            self._remember_prompt(request, prompt)
+        handoff_id = await self._escalate(message, bot, reply, user) if reply.escalate else None
+        if handoff_id is not None:
+            # The conversation reached a person: the operator is rated for it, not the bot.
+            self.feedback.escalated(CHANNEL, client_id, handoff_id, reply.language.value, reply.topic)
+        elif opens:
+            self.feedback.bot_answered(CHANNEL, client_id, reply.language.value, reply.topic)
 
-    def _remember_prompt(self, request: RatingRequest, prompt) -> None:
-        message_id = getattr(prompt, "message_id", None)
-        if message_id is not None:
-            self.feedback.set_prompt_ref(request.id, str(message_id))
-
-    @staticmethod
-    async def _remove_prompts(bot: Bot, requests: list[RatingRequest]) -> None:
-        """Only the latest rating request keeps its buttons; older prompts are deleted."""
-        for r in requests:
-            if r.prompt_ref:
-                try:
-                    await bot.delete_message(int(r.client_id), int(r.prompt_ref))
-                except Exception:  # too old to delete or already gone: the request is closed anyway
-                    pass
-
-    async def _escalate(self, message: Message, bot: Bot, reply: BotReply, user=None) -> None:
+    async def _escalate(self, message: Message, bot: Bot, reply: BotReply, user=None) -> int | None:
+        """Post the hand-off to the support chat; returns its id (None without a support chat)."""
         chat = self.settings.support_chat_id
         if chat is None:
             log.warning("escalation without SUPPORT_CHAT_ID: chat=%s reason=%s", message.chat.id, reply.escalation_reason)
-            return
+            return None
         user = user or message.from_user
         who = f"@{user.username}" if user and user.username else (user.full_name if user else "?")
         client_id = str(message.chat.id)
@@ -353,7 +353,8 @@ class TelegramSupportBot:
             f"Ответ бота: {reply.text}\n\n"
             f"{ai}\n\n"
             "Ответьте реплаем на это сообщение, и бот перешлёт ответ клиенту. "
-            "Оцените тон клиента кнопками ниже; /client <суть> | <предложения> реплаем — заметка о клиенте."
+            "Оцените тон клиента кнопками ниже; /client <суть> | <предложения> реплаем — заметка о клиенте. "
+            "Когда вопрос решён, завершите разговор: клиент получит просьбу оценить его."
         )
         posted = await bot.send_message(chat, summary[:4096], reply_markup=tone_keyboard())
         handoff_id = self.handoffs.open(CHANNEL, client_id, str(chat), str(posted.message_id), reply,
@@ -362,15 +363,18 @@ class TelegramSupportBot:
             self.feedback.assess(CHANNEL, client_id, "ai", assessment, handoff_id)
         if message.photo or message.voice or message.document or message.audio:
             await bot.forward_message(chat, message.chat.id, message.message_id)
+        return handoff_id
 
     async def on_operator_reply(self, message: Message, bot: Bot) -> None:
         handoff = self.handoffs.find(str(message.chat.id), str(message.reply_to_message.message_id))
         text = message.text or message.caption
         if handoff is None or not text:
             return
-        await bot.send_message(int(handoff.client_chat_id), text)
+        lang = _lang(handoff.language)
+        await bot.send_message(int(handoff.client_chat_id), text, reply_markup=end_keyboard(lang))
         u = message.from_user
-        await self._ask_operator_rating(bot, handoff, u)
+        self.feedback.operator_replied(CHANNEL, handoff.client_chat_id, handoff.id, lang.value,
+                                       str(u.id) if u else None, u.full_name if u else None)
         candidate, created = self.handoffs.add_operator_reply(
             handoff.id, text, str(u.id) if u else None, u.full_name if u else None,
         )
@@ -378,16 +382,58 @@ class TelegramSupportBot:
             await message.answer(f"Ответ сохранён. Кандидат #{candidate.id} в базу знаний:\n\n"
                                  f"{candidate_text(candidate)}\n\n{REVIEW_HELP.replace('N', str(candidate.id))}")
 
-    async def _ask_operator_rating(self, bot: Bot, handoff, operator) -> None:
-        lang = _lang(handoff.language)
-        request, replaced = self.feedback.ask(
-            CHANNEL, handoff.client_chat_id, OPERATOR, lang.value, handoff.topic, handoff.id,
-            str(operator.id) if operator else None, operator.full_name if operator else None,
-        )
-        await self._remove_prompts(bot, replaced)
-        prompt = await bot.send_message(int(handoff.client_chat_id), t("rate_operator", lang),
-                                        reply_markup=rating_keyboard(request, lang))
-        self._remember_prompt(request, prompt)
+    # --- ending a conversation and rating it ----------------------------------------------------
+
+    async def _end(self, bot: Bot, client_chat_id: int, by: str) -> bool:
+        """Close the client's open conversation and ask them to rate it; False if nothing was open."""
+        ended = self.feedback.end(CHANNEL, str(client_chat_id), by)
+        if ended is None:
+            return False
+        conversation, request = ended
+        lang = _lang(conversation.language)
+        text = t("rate_operator" if request.target == OPERATOR else "rate_bot", lang)
+        if by == OPERATOR:
+            text = f"{t('ended_by_operator', lang)}\n{text}"
+        await bot.send_message(client_chat_id, text, reply_markup=rating_keyboard(request, lang))
+        if request.target == BOT:
+            # A conversation the bot handled alone: the AI assesses the client, for the support team only.
+            assessment = await self.engine.assess_client(str(client_chat_id))
+            if assessment is not None:
+                self.feedback.assess(CHANNEL, str(client_chat_id), "ai", assessment)
+        self.engine.end_conversation(str(client_chat_id))
+        return True
+
+    async def _client_ends(self, bot: Bot, chat_id: int, lang: Lang) -> None:
+        if not await self._end(bot, chat_id, "client"):
+            await bot.send_message(chat_id, t("no_conversation", lang), reply_markup=quick_keyboard(lang))
+
+    async def on_end_command(self, message: Message, bot: Bot) -> None:
+        user = self.register_user(message)
+        await self._client_ends(bot, message.chat.id, user.lang)
+
+    async def on_end_button(self, callback: CallbackQuery, bot: Bot) -> None:
+        await callback.answer()
+        if callback.message is None:
+            return
+        user = self.users.get(CHANNEL, str(callback.from_user.id))
+        await self._client_ends(bot, callback.message.chat.id, user.lang if user else Lang.UZ_LATN)
+
+    async def _operator_ends(self, bot: Bot, handoff) -> str:
+        if handoff is None:
+            return "Эскалация не найдена."
+        if self.feedback.conversation_for_handoff(handoff.id) is None:
+            return "Разговор уже завершён."
+        await self._end(bot, int(handoff.client_chat_id), OPERATOR)
+        return "Разговор завершён, клиента попросили его оценить."
+
+    async def on_operator_end(self, message: Message, bot: Bot) -> None:
+        """/end as a reply to an escalation post."""
+        handoff = self.handoffs.find(str(message.chat.id), str(message.reply_to_message.message_id))
+        await message.answer(await self._operator_ends(bot, handoff))
+
+    async def on_operator_end_button(self, callback: CallbackQuery, bot: Bot) -> None:
+        handoff = self.handoffs.find(str(callback.message.chat.id), str(callback.message.message_id))
+        await callback.answer(await self._operator_ends(bot, handoff))
 
     async def on_rate(self, callback: CallbackQuery, bot: Bot) -> None:
         """The client tapped a rating button."""
@@ -411,11 +457,6 @@ class TelegramSupportBot:
             pass
         if rated.target == BOT and rated.stars <= 2:
             await callback.message.answer(t("rate_bot_low", lang))
-        if rated.target == BOT and before.status != "rated":
-            # A case the bot handled alone: the AI assesses the client once, for the support team only.
-            assessment = await self.engine.assess_client(client_id)
-            if assessment is not None:
-                self.feedback.assess(CHANNEL, client_id, "ai", assessment)
 
     async def on_client_tone(self, callback: CallbackQuery) -> None:
         """An operator rated how the client talked, with the buttons under the escalation post."""
@@ -529,9 +570,12 @@ def review_error_text(candidate_id: int, e: ReviewError) -> str:
 
 # Commands shown in Telegram's "Menu" button; Uzbek is the default, ru/en follow the app language.
 COMMANDS = {
-    None: [("start", "Boshlash"), ("language", "Tilni o'zgartirish"), ("operator", "Operator bilan bog'lanish")],
-    "ru": [("start", "Начать"), ("language", "Изменить язык"), ("operator", "Связаться с оператором")],
-    "en": [("start", "Start"), ("language", "Change language"), ("operator", "Contact an operator")],
+    None: [("start", "Boshlash"), ("language", "Tilni o'zgartirish"), ("operator", "Operator bilan bog'lanish"),
+           ("end", "Suhbatni yakunlash")],
+    "ru": [("start", "Начать"), ("language", "Изменить язык"), ("operator", "Связаться с оператором"),
+           ("end", "Завершить разговор")],
+    "en": [("start", "Start"), ("language", "Change language"), ("operator", "Contact an operator"),
+           ("end", "End conversation")],
 }
 
 
