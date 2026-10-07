@@ -57,6 +57,10 @@ class KnowledgeBase:
         for t in self.topics:
             lines.append(f'### topic={t["section"]}/{t["id"]}: {t["title"]}')
             lines.append("Ответ: " + " ".join(f"{i}) {x}" for i, x in enumerate(t["answer_steps"], 1)))
+            if t.get("official_text"):
+                lines.append("Официальный текст команды (используй его на языке клиента, не переписывай по-своему):")
+                for lang, text in t["official_text"].items():
+                    lines.append(f"[{lang}] {text}")
             if t.get("forbidden"):
                 lines.append("Нельзя: " + " ".join(t["forbidden"]))
             if t.get("escalate_if"):
