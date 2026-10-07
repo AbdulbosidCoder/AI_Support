@@ -28,9 +28,11 @@ from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     BotCommand,
+    FSInputFile,
     KeyboardButton,
     Message,
     ReplyKeyboardMarkup,
+    URLInputFile,
 )
 
 from ..config import Settings
@@ -44,7 +46,7 @@ from ..handoffs import Candidate, HandoffStore, ReviewError
 from ..menu import (
     CHANGE_LANGUAGE_LABEL, CHOOSE_LANGUAGE, END_LABEL, LANGUAGE_CHOICES, QUICK_QUESTIONS, match_menu, menu_rows, quick_question,
 )
-from ..models import Audio, BotReply, Image, IncomingMessage, Lang
+from ..models import Audio, BotReply, Image, IncomingMessage, Lang, VideoAttachment
 from ..prompt import build_system_prompt
 from ..templates import t
 from ..users import User, UserStore
@@ -117,6 +119,18 @@ def main_menu(lang: Lang) -> ReplyKeyboardMarkup:
     )
 
 
+def video_input(video: VideoAttachment, uploaded: dict[str, str]):
+    """What to pass to send_video: an uploaded copy's file_id, else the local file, else the URL."""
+    file_id = uploaded.get(video.id) or video.file_ids.get(CHANNEL)
+    if file_id:
+        return file_id
+    if video.path:
+        return FSInputFile(video.path)
+    if video.url:
+        return URLInputFile(video.url)
+    return None
+
+
 def message_text(message: Message) -> str:
     """The client's words: text for plain messages, caption for photos/documents/voice."""
     return (message.text or message.caption or "").strip()
@@ -143,6 +157,8 @@ class TelegramSupportBot:
         # Client ratings of the bot/operators and assessments of clients (internal only).
         self.feedback = feedback or FeedbackStore(":memory:")
         self._albums: MediaGroupCollector[tuple[Message, Bot]] | None = None
+        # Instruction video id -> Telegram file_id of the copy uploaded by this bot.
+        self._video_file_ids: dict[str, str] = {}
         self.router = Router()
         self._register()
 
@@ -322,6 +338,7 @@ class TelegramSupportBot:
         opens = opens_conversation(reply)
         markup = quick_keyboard(reply.language) if reply.show_menu else (end_keyboard(reply.language) if opens else None)
         await message.answer(reply.text, reply_markup=markup)
+        await self._send_videos(message, reply)
         client_id = str(message.chat.id)
         handoff_id = await self._escalate(message, bot, reply, user) if reply.escalate else None
         if handoff_id is not None:
@@ -329,6 +346,21 @@ class TelegramSupportBot:
             self.feedback.escalated(CHANNEL, client_id, handoff_id, reply.language.value, reply.topic)
         elif opens:
             self.feedback.bot_answered(CHANNEL, client_id, reply.language.value, reply.topic)
+
+    async def _send_videos(self, message: Message, reply: BotReply) -> None:
+        """Instruction videos after the answer; a failed video never breaks the answer itself."""
+        for video in reply.videos:
+            media = video_input(video, self._video_file_ids)
+            if media is None:
+                continue
+            try:
+                sent = await message.answer_video(media, caption=video.title[:1024], supports_streaming=True)
+            except Exception as e:  # noqa: BLE001 - Telegram/network errors: the text answer is already sent
+                log.warning("video %s not sent: %s", video.id, e)
+                continue
+            if sent.video:
+                # Upload once: later clients get the same file by id.
+                self._video_file_ids[video.id] = sent.video.file_id
 
     async def _escalate(self, message: Message, bot: Bot, reply: BotReply, user=None) -> int | None:
         """Post the hand-off to the support chat; returns its id (None without a support chat)."""

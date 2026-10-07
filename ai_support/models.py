@@ -26,6 +26,17 @@ class Audio:
 
 
 @dataclass
+class VideoAttachment:
+    """An instruction video to send after the answer; the channel picks the source it can use."""
+
+    id: str
+    title: str
+    path: str | None = None
+    url: str = ""
+    file_ids: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
 class IncomingMessage:
     """One client message, whatever channel it came from."""
 
@@ -48,3 +59,5 @@ class BotReply:
     guardrail_triggered: bool = False
     # Offer the quick-question menu with this reply (greeting or a message without a problem).
     show_menu: bool = False
+    # Instruction videos for the answer's topic (see ai_support/videos.py), sent after the text.
+    videos: list[VideoAttachment] = field(default_factory=list)
