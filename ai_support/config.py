@@ -22,6 +22,13 @@ class Settings:
     history_turns: int = 6
     # SQLite file with registered clients and their chosen language.
     db_path: Path = ROOT / "data" / "db" / "bot.sqlite3"
+    # Admin bot and its web panel (Telegram mini app), served through a Cloudflare Tunnel.
+    admin_bot_token: str = ""
+    # Telegram user ids allowed into the admin bot and panel.
+    admin_ids: frozenset[int] = frozenset()
+    # Public hostname the tunnel routes to the panel, e.g. admin.example.com.
+    admin_domain: str = ""
+    admin_port: int = 8080
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -37,4 +44,19 @@ class Settings:
             kb_dir=Path(os.getenv("KB_DIR", str(cls.kb_dir))),
             history_turns=int(os.getenv("HISTORY_TURNS", cls.history_turns)),
             db_path=Path(os.getenv("DB_PATH", str(cls.db_path))),
+            admin_bot_token=os.getenv("ADMIN_BOT_TOKEN", ""),
+            admin_ids=parse_ids(os.getenv("ADMIN_IDS", "")),
+            admin_domain=os.getenv("ADMIN_DOMAIN", "").strip(),
+            admin_port=int(os.getenv("ADMIN_PORT", cls.admin_port)),
         )
+
+    @property
+    def admin_url(self) -> str:
+        """HTTPS address of the admin panel; Telegram opens mini apps only over HTTPS."""
+        domain = self.admin_domain.removeprefix("https://").removeprefix("http://").strip("/")
+        return f"https://{domain}/" if domain else ""
+
+
+def parse_ids(value: str) -> frozenset[int]:
+    """'123, 456' -> {123, 456}; anything that is not a number is ignored."""
+    return frozenset(int(p) for p in value.replace(";", ",").split(",") if p.strip().lstrip("-").isdigit())

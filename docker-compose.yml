@@ -17,5 +17,44 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  admin:
+    # Admin bot + web panel (Telegram mini app): sessions as chats, operators, activity.
+    # ADMIN_BOT_TOKEN, ADMIN_IDS, ADMIN_DOMAIN (see .env.example). Without ADMIN_BOT_TOKEN it exits and stays off.
+    build: .
+    image: xonsaroy-ai-support:latest
+    container_name: xonsaroy-ai-support-admin
+    command: ["python", "-m", "ai_support.admin"]
+    env_file: .env
+    restart: on-failure
+    depends_on:
+      - bot
+    volumes:
+      # The same SQLite database as the client bot.
+      - bot-data:/app/data/db
+    expose:
+      - "8080"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  tunnel:
+    # Cloudflare Tunnel publishes the admin panel at https://ADMIN_DOMAIN without opening ports.
+    # In the Cloudflare dashboard, route the tunnel's public hostname ADMIN_DOMAIN to http://admin:8080.
+    image: cloudflare/cloudflared:latest
+    container_name: xonsaroy-ai-support-tunnel
+    command: ["tunnel", "--no-autoupdate", "run"]
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    restart: unless-stopped
+    depends_on:
+      - admin
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 volumes:
   bot-data:
