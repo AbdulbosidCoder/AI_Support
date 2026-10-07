@@ -7,6 +7,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from . import guardrails
+from .videos import VideoLibrary
 
 
 @dataclass
@@ -16,12 +17,14 @@ class KnowledgeBase:
     global_rules: list[str]
     # Approved operator answers: {"id", "language", "topic", "question", "answer"}.
     learned: list[dict] = field(default_factory=list)
+    videos: VideoLibrary = field(default_factory=VideoLibrary)
 
     @classmethod
     def load(cls, kb_dir: Path) -> "KnowledgeBase":
         screens = json.loads((kb_dir / "screens.json").read_text(encoding="utf-8"))
         faq = json.loads((kb_dir / "faq.json").read_text(encoding="utf-8"))
-        return cls(screens["screens"], faq["topics"], screens.get("global_rules", []))
+        return cls(screens["screens"], faq["topics"], screens.get("global_rules", []),
+                   videos=VideoLibrary.load(kb_dir))
 
     def with_learned(self, learned: list[dict]) -> "KnowledgeBase":
         return replace(self, learned=list(learned))
@@ -58,6 +61,9 @@ class KnowledgeBase:
                 lines.append("Нельзя: " + " ".join(t["forbidden"]))
             if t.get("escalate_if"):
                 lines.append(f'Эскалация, если: {t["escalate_if"]}')
+            if self.videos.for_topic(f'{t["section"]}/{t["id"]}'):
+                lines.append("Видео-инструкция: есть. Система сама отправит видео после твоего ответа; "
+                             "коротко скажи, что видео ниже, ссылок не пиши.")
         # Defense in depth: an answer that breaks a hard rule never reaches the prompt, even if stored.
         learned = [x for x in self.learned if not guardrails.find_violations(x["answer"])]
         if learned:

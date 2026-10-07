@@ -71,10 +71,10 @@ _T: dict[str, dict[Lang, str]] = {
         Lang.EN: "I couldn't open the image. Please send the screenshot as JPG or PNG, or describe the problem in text.",
     },
     "empty": {
-        Lang.UZ_LATN: "Muammoingizni yozing yoki ilova skrinshotini yuboring.",
-        Lang.UZ_CYRL: "Муаммоингизни ёзинг ёки илова скриншотини юборинг.",
-        Lang.RU: "Опишите проблему или отправьте скриншот приложения.",
-        Lang.EN: "Please describe the problem or send a screenshot of the app.",
+        Lang.UZ_LATN: "Muammoingizni yozing yoki Xonsaroy Pay ilovasi skrinshotini yuboring.",
+        Lang.UZ_CYRL: "Муаммоингизни ёзинг ёки Xonsaroy Pay иловаси скриншотини юборинг.",
+        Lang.RU: "Опишите проблему или отправьте скриншот приложения Xonsaroy Pay.",
+        Lang.EN: "Please describe the problem or send a screenshot of the Xonsaroy Pay app.",
     },
     "rate_bot": {
         Lang.UZ_LATN: "Suhbat yakunlandi. Yordamchi qanchalik yordam bera oldi? Baholang:",
