@@ -16,6 +16,10 @@ class FakeLLM:
         self.result = result or answer()
         self.error = error
         self.calls = []
+        self.system_prompts = []
+
+    def set_system_prompt(self, system_prompt):
+        self.system_prompts.append(system_prompt)
 
     async def answer(self, history, text, images, note=""):
         self.calls.append((list(history), text, list(images), note))

@@ -9,7 +9,7 @@ services:
     volumes:
       # Knowledge base is mounted read-only: edit the JSON files and `docker compose restart bot`, no rebuild.
       - ./data/knowledge_base:/app/data/knowledge_base:ro
-      # Registered clients and their chosen language (SQLite); survives rebuilds and restarts.
+      # Clients, saved escalations, operator replies and approved answers (SQLite); survives rebuilds and restarts.
       - bot-data:/app/data/db
     logging:
       driver: json-file
