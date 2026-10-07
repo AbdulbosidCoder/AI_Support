@@ -196,26 +196,26 @@ async function session(id) {
 async function operators() {
   const ops = await api("/api/operators");
   view.innerHTML = `<form class="add" id="add"><b>Добавить оператора</b>
-      <input name="user_id" inputmode="numeric" placeholder="Telegram id (оператор узнает его у админ-бота)" required>
+      <input name="phone" inputmode="tel" placeholder="Телефон: +998 90 123 45 67 (или Telegram id)" required>
       <input name="name" placeholder="Имя">
-      <input name="username" placeholder="@username (необязательно)">
       <button class="btn">Добавить</button></form>
-    <p class="muted">Пока список пуст, клиентам отвечает любой участник чата поддержки; после добавления первого
-      оператора — только активные операторы из списка.</p>
+    <p class="muted">Оператор открывает клиентский бот, нажимает /start и при регистрации делится этим номером:
+      бот сам привяжет его Telegram id. Пока нет ни одного привязанного оператора, клиентам отвечает любой
+      участник чата поддержки; потом — только активные операторы из списка.</p>
     <div class="list">${ops.map(o => `<div class="row"><span class="dot ${o.active ? "open" : ""}"></span>
-      <div class="grow" onclick="location.hash='sessions'; sessions.state={status:'', operator:'${esc(o.user_id)}'}">
+      <div class="grow" onclick="location.hash='sessions'; sessions.state={status:'', operator:'${esc(o.user_id || "")}'}">
         <div class="title">${esc(o.name)} ${o.username ? "@" + esc(o.username) : ""}</div>
-        <div class="muted">id ${esc(o.user_id)} · ответов ${o.replies} · сессий ${o.sessions} (открыто ${o.sessions_open})
+        <div class="muted">${o.registered && !o.linked ? '<span class="pill">ждём регистрации в боте</span> ' : ""}${[o.phone, o.user_id ? "id " + o.user_id : ""].filter(Boolean).map(esc).join(" · ")} · ответов ${o.replies} · сессий ${o.sessions} (открыто ${o.sessions_open})
           · ${o.rating !== null ? o.rating + "★ (" + o.ratings + ")" : "оценок нет"}
           ${o.last_reply ? " · последний ответ " + when(o.last_reply) : ""}</div></div>
-      <button class="btn ghost" data-id="${esc(o.user_id)}" data-name="${esc(o.name)}"
+      <button class="btn ghost" data-id="${esc(o.key)}" data-name="${esc(o.name)}"
         data-act="${o.registered ? (o.active ? "off" : "on") : "add"}">${o.registered ? (o.active ? "Отключить" : "Включить") : "Добавить"}</button>
     </div>`).join("") || '<div class="empty">Операторов пока нет</div>'}</div>`;
   document.getElementById("add").onsubmit = async e => {
     e.preventDefault();
     const f = new FormData(e.target);
     await api("/api/operators", {method: "POST", body: JSON.stringify(Object.fromEntries(f))}).catch(err =>
-      alert(err.message === "bad_id" ? "Telegram id — это число" : err.message));
+      alert({bad_id: "Telegram id — это число", bad_phone: "Проверьте номер телефона"}[err.message] || err.message));
     operators().catch(fail);
   };
   view.querySelectorAll("button[data-act]").forEach(b => b.onclick = async () => {

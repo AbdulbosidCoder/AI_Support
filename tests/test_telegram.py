@@ -1017,3 +1017,29 @@ def test_forbidden_answer_stays_replaced_after_signing():
     asyncio.run(bot.on_client_message(client_msg(chat, "Pulim qachon qaytadi?"), chat))
     text = chat.sent[-1][0]
     assert text == said(t("guardrail", Lang.UZ_LATN)) and guardrails.find_violations(text) == []
+
+
+def test_operator_added_by_phone_is_linked_when_they_register():
+    from ai_support.channels.telegram_bot import OPERATOR_LINKED
+    bot, users = make_bot(register=False)
+    bot.operators.add_phone("+998 90 123 45 67", "Dilnoza")
+    assert bot.operators.may_answer(99)  # not registered yet: nothing changes for the support chat
+    chat = Chat()
+    asyncio.run(bot.on_start(client_msg(chat, "/start")))
+    asyncio.run(bot.on_language_chosen(callback(chat, "lang:ru")))
+    asyncio.run(bot.on_contact(contact_msg(chat)))
+    op = bot.operators.get("42")
+    assert op is not None and op.phone == "+998901234567" and op.name == "Dilnoza"
+    assert OPERATOR_LINKED in [text for text, _ in chat.sent]
+    assert bot.operators.may_answer(42) and not bot.operators.may_answer(99)
+
+
+def test_client_with_other_number_is_not_an_operator():
+    from ai_support.channels.telegram_bot import OPERATOR_LINKED
+    bot, users = make_bot(register=False)
+    bot.operators.add_phone("+998911111111", "Dilnoza")
+    chat = Chat()
+    asyncio.run(bot.on_start(client_msg(chat, "/start")))
+    asyncio.run(bot.on_language_chosen(callback(chat, "lang:ru")))
+    asyncio.run(bot.on_contact(contact_msg(chat)))
+    assert bot.operators.get("42") is None and OPERATOR_LINKED not in [text for text, _ in chat.sent]
