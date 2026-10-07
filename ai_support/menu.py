@@ -34,6 +34,15 @@ class QuickQuestion:
 
 QUICK_QUESTIONS: list[QuickQuestion] = [
     QuickQuestion(
+        "registration",
+        {Lang.UZ_LATN: "📝 Ro'yxatdan o'tish", Lang.UZ_CYRL: "📝 Рўйхатдан ўтиш",
+         Lang.RU: "📝 Регистрация", Lang.EN: "📝 Registration"},
+        {Lang.UZ_LATN: "Xonsaroy Pay ilovasida qanday ro'yxatdan o'taman va identifikatsiyadan o'taman?",
+         Lang.UZ_CYRL: "Xonsaroy Pay иловасида қандай рўйхатдан ўтаман ва идентификациядан ўтаман?",
+         Lang.RU: "Как зарегистрироваться в приложении Xonsaroy Pay и пройти идентификацию?",
+         Lang.EN: "How do I register in the Xonsaroy Pay app and pass identification?"},
+    ),
+    QuickQuestion(
         "add_card",
         {Lang.UZ_LATN: "💳 Karta qo'shish", Lang.UZ_CYRL: "💳 Карта қўшиш",
          Lang.RU: "💳 Добавить карту", Lang.EN: "💳 Add a card"},

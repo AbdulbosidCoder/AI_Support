@@ -83,7 +83,7 @@ def test_reply_to_other_chat_image_ignored():
 
 from aiogram.types import InlineKeyboardMarkup, ReplyKeyboardMarkup, ReplyKeyboardRemove
 
-from ai_support.menu import CHOOSE_LANGUAGE, END_LABEL, OPERATOR_LABEL, QUICK_QUESTIONS, SETTINGS_LABEL
+from ai_support.menu import CHOOSE_LANGUAGE, END_LABEL, OPERATOR_LABEL, QUICK_QUESTIONS, SETTINGS_LABEL, quick_question
 from ai_support.models import BotReply, Lang
 from ai_support.templates import t
 from ai_support.users import UserStore
@@ -294,8 +294,9 @@ def test_mini_menu_button_asks_question_in_chosen_language():
     chat = Chat()
     users.set_language("telegram", "42", Lang.RU)
     asyncio.run(bot.on_quick_question(callback(chat, "q:add_card"), chat))
-    assert llm.calls[0][1] == QUICK_QUESTIONS[0].question[Lang.RU]
-    assert chat.sent[-2][0] == f"{t('your_question', Lang.RU)} {QUICK_QUESTIONS[0].question[Lang.RU]}"
+    q = quick_question("add_card")
+    assert llm.calls[0][1] == q.question[Lang.RU]
+    assert chat.sent[-2][0] == f"{t('your_question', Lang.RU)} {q.question[Lang.RU]}"
     text, kb = chat.sent[-1]
     assert text == said("Kartalarim bo'limiga kiring.", Lang.UZ_LATN)
     assert [b.callback_data for b in kb.inline_keyboard[0]] == ["end", "menu"]
@@ -864,7 +865,7 @@ def test_chat_log_for_bot_only_conversation_and_quick_question():
     chat, tg = ClientChat(), RatingTG()
     asyncio.run(bot.on_quick_question(callback(chat, "q:add_card"), tg))
     log = chatlog.for_client("telegram", "42")
-    assert [(m.sender, m.text) for m in log] == [("client", QUICK_QUESTIONS[0].question[Lang.UZ_LATN]),
+    assert [(m.sender, m.text) for m in log] == [("client", quick_question("add_card").question[Lang.UZ_LATN]),
                                                  ("bot", "Kartalarim bo'limiga kiring.")]
     ids = {r[0] for r in chatlog._db.execute("SELECT conversation_id FROM chat_messages")}
     assert len(ids) == 1 and None not in ids
@@ -1043,3 +1044,145 @@ def test_client_with_other_number_is_not_an_operator():
     asyncio.run(bot.on_language_chosen(callback(chat, "lang:ru")))
     asyncio.run(bot.on_contact(contact_msg(chat)))
     assert bot.operators.get("42") is None and OPERATOR_LINKED not in [text for text, _ in chat.sent]
+
+
+# --- One set of buttons at a time: menus are edited in place, old buttons disappear ---------------
+
+class AppChat:
+    """A client chat like Telegram's: messages have ids and can be edited; also stands in for the Bot."""
+
+    def __init__(self):
+        self.messages = {}  # id -> [text, markup]
+        self.order = []
+        self.cleared = []
+
+    async def answer(self, text, reply_markup=None, **_):
+        mid = len(self.order) + 1
+        self.messages[mid] = [text, reply_markup]
+        self.order.append(mid)
+        return NS(message_id=mid)
+
+    async def send_message(self, chat, text, reply_markup=None, **_):
+        return await self.answer(text, reply_markup)
+
+    async def edit_message_reply_markup(self, chat_id, message_id, reply_markup=None):
+        self.cleared.append(message_id)
+        self.messages[message_id][1] = reply_markup
+
+    async def send_chat_action(self, *_):
+        pass
+
+    def buttons(self):
+        """Ids of messages that still show inline buttons."""
+        return [m for m in self.order if isinstance(self.messages[m][1], InlineKeyboardMarkup)]
+
+    def message(self, mid, uid=42):
+        async def edit_text(text, reply_markup=None, **_):
+            self.messages[mid] = [text, reply_markup]
+
+        async def edit_reply_markup(reply_markup=None, **_):
+            self.messages[mid][1] = reply_markup
+        return NS(chat=NS(id=uid), message_id=mid, answer=self.answer, edit_text=edit_text,
+                  edit_reply_markup=edit_reply_markup)
+
+    def tap(self, mid, data, uid=42):
+        async def noop(*_, **__):
+            pass
+        return NS(data=data, from_user=NS(id=uid, username="ali", full_name="Ali", language_code="ru"),
+                  message=self.message(mid, uid), answer=noop)
+
+
+def app_msg(chat, text, uid=42):
+    m = client_msg(chat, text, uid)
+    m.answer = chat.answer
+    return m
+
+
+def test_menu_screens_edit_one_message_in_place():
+    bot, users = make_bot()
+    chat = AppChat()
+    asyncio.run(bot.on_start(app_msg(chat, "/start")))
+    menu = chat.order[-1]
+    asyncio.run(bot.on_settings_button(chat.tap(menu, "settings")))
+    assert chat.order == [menu] and chat.messages[menu][0] == t("settings", Lang.UZ_LATN)
+    asyncio.run(bot.on_change_language(chat.tap(menu, "settings:language")))
+    assert chat.order == [menu] and chat.messages[menu][0] == CHOOSE_LANGUAGE
+    asyncio.run(bot.on_language_chosen(chat.tap(menu, "lang:ru")))
+    assert chat.order == [menu] and t("welcome", Lang.RU) in chat.messages[menu][0]
+    asyncio.run(bot.on_menu_button(chat.tap(menu, "menu")))
+    assert chat.order == [menu] and chat.buttons() == [menu]
+
+
+def test_only_the_latest_answer_keeps_buttons():
+    bot, users = make_bot(FakeLLM(answer("Kartalarim bo'limiga kiring.", "uz_latn", topic="add_card")))
+    chat = AppChat()
+    asyncio.run(bot.on_start(app_msg(chat, "/start")))
+    asyncio.run(bot.on_client_message(app_msg(chat, "Karta qo'shilmayapti"), chat))
+    asyncio.run(bot.on_client_message(app_msg(chat, "Yana bir savol"), chat))
+    assert chat.buttons() == [chat.order[-1]] and len(chat.order) == 3
+
+
+def test_quick_question_turns_the_menu_into_the_question():
+    llm = FakeLLM(answer("Kartalarim bo'limiga kiring.", "uz_latn", topic="add_card"))
+    bot, users = make_bot(llm)
+    chat = AppChat()
+    asyncio.run(bot.on_start(app_msg(chat, "/start")))
+    menu = chat.order[-1]
+    asyncio.run(bot.on_quick_question(chat.tap(menu, "q:add_card"), chat))
+    q = quick_question("add_card")
+    assert chat.messages[menu] == [f"{t('your_question', Lang.UZ_LATN)} {q.question[Lang.UZ_LATN]}", None]
+    assert len(chat.order) == 2 and chat.buttons() == [chat.order[-1]]
+    # "Menu" under the answer keeps the answer and sends the menu; the answer's buttons go away.
+    answer_id = chat.order[-1]
+    asyncio.run(bot.on_menu_button(chat.tap(answer_id, "menu")))
+    assert chat.messages[answer_id][0] == said("Kartalarim bo'limiga kiring.") and chat.buttons() == [chat.order[-1]]
+
+
+def test_ending_removes_answer_buttons_and_keeps_rating_buttons():
+    bot, feedback = rating_bot(FakeLLM(answer("Kartalarim bo'limiga kiring.", "uz_latn", topic="add_card")))
+    chat = AppChat()
+    asyncio.run(bot.on_client_message(app_msg(chat, "Karta qo'shilmayapti"), chat))
+    asyncio.run(bot.on_end_button(chat.tap(chat.order[-1], "end"), chat))
+    rating = chat.order[-1]
+    assert chat.messages[rating][0] == t("rate_bot", Lang.UZ_LATN) and chat.buttons() == [rating]
+    asyncio.run(bot.on_client_message(app_msg(chat, "Salom"), chat))  # a new menu does not take the rating away
+    assert rating in chat.buttons()
+
+
+def test_registration_guide_is_a_quick_question_from_the_knowledge_base():
+    from ai_support.factory import load_knowledge
+    q = quick_question("registration")
+    assert QUICK_QUESTIONS[0] is q and all(q.label[lang] and q.question[lang] for lang in Lang)
+    kb = load_knowledge(Settings())
+    assert "registration/registration_guide" in kb.topic_ids()
+    rendered = kb.render()
+    assert "Telefon raqamini kiriting" in rendered and "Barmoq izi skaneri" in rendered
+    llm = FakeLLM(answer("1. Telefon raqamini kiriting...", "ru", topic="registration/registration_guide"))
+    bot, users = make_bot(llm)
+    chat = Chat()
+    asyncio.run(bot.on_quick_question(callback(chat, "q:registration"), chat))
+    assert llm.calls[0][1] == q.question[Lang.UZ_LATN]
+
+
+def test_registration_guide_forbidden_answer_replaced():
+    bot, users = make_bot(FakeLLM(answer("Identifikatsiya muvaffaqiyatli o'tdi, pulingiz 2 soat ichida qaytadi.",
+                                         "uz_latn", topic="registration/registration_guide")))
+    chat = Chat()
+    asyncio.run(bot.on_quick_question(callback(chat, "q:registration"), chat))
+    assert chat.sent[-1][0] == said(t("guardrail", Lang.UZ_LATN))
+
+
+def test_panel_rating_edits_the_panel_in_place():
+    bot, tg, llm, handoffs = escalated()
+    edits = []
+
+    async def edit_text(text, reply_markup=None, **_):
+        edits.append((text, reply_markup))
+    cb, _, support = button("panel:rating")
+    cb.message.edit_text = edit_text
+    asyncio.run(bot.on_panel_button(cb))
+    assert support.sent == [] and "Анонимный рейтинг" in edits[-1][0]
+    assert edits[-1][1].inline_keyboard[0][0].callback_data == "panel:home"
+    cb.data = "panel:home"
+    asyncio.run(bot.on_panel_button(cb))
+    assert edits[-1][1].inline_keyboard[0][0].callback_data == "panel:candidates"
