@@ -57,7 +57,7 @@
   .msg.client { align-self: flex-start; background: var(--client); border-bottom-left-radius: 4px; }
   .msg.bot { align-self: flex-end; background: var(--bot); border-bottom-right-radius: 4px; }
   .msg.operator { align-self: flex-end; background: var(--op); border-bottom-right-radius: 4px; }
-  .msg.event { align-self: center; background: none; color: var(--hint); font-size: 12px; padding: 2px; }
+  .msg.system, .msg.event { align-self: center; background: none; color: var(--hint); font-size: 12px; padding: 2px; }
   .back { color: var(--link); background: none; border: 0; font: inherit; padding: 4px 0; cursor: pointer; }
   .head { background: var(--bg); border-radius: 12px; padding: 12px; margin-top: 6px; }
   .empty { text-align: center; color: var(--hint); padding: 30px 10px; }
@@ -83,7 +83,7 @@ const when = iso => { if (!iso) return ""; const d = new Date(iso);
   return isNaN(d) ? iso : d.toLocaleString("ru-RU", {day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit"}); };
 const LANG = {uz_latn: "uz", uz_cyrl: "уз", ru: "ru", en: "en"};
 const WHO = {client: "Клиент", bot: "🤖 Бот", operator: "👨‍💼 Оператор"};
-const KIND = {photo: "📷 Фото", voice: "🎤 Голос", document: "📎 Файл"};
+const KIND = {photo: "📷 Фото", voice: "🎤 Голос", audio: "🎵 Аудио", document: "📎 Файл"};
 
 async function api(path, options = {}) {
   const res = await fetch(path, {...options, headers: {"Content-Type": "application/json",
@@ -170,8 +170,8 @@ async function sessions() {
 async function session(id) {
   const render = async () => {
     const s = await api(`/api/sessions/${encodeURIComponent(id)}`);
-    const msgs = s.messages.map(m => m.sender === "event"
-      ? `<div class="msg event">${esc(m.text)} · ${when(m.created_at)}</div>`
+    const msgs = s.messages.map(m => (m.sender === "system" || m.sender === "event")
+      ? `<div class="msg system">${esc(m.text)} · ${when(m.created_at)}</div>`
       : `<div class="msg ${esc(m.sender)}"><div class="who">${esc(m.sender === "operator" && m.operator_name
           ? "👨‍💼 " + m.operator_name : WHO[m.sender] || m.sender)}</div>${m.kind !== "text"
           ? `<i>${KIND[m.kind] || m.kind}</i>${m.text ? "\n" : ""}` : ""}${esc(m.text)}<small>${when(m.created_at)}</small></div>`);

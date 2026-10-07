@@ -169,7 +169,9 @@ class AdminData:
         prev = self._one(
             """SELECT MAX(closed_at) FROM conversations WHERE channel = ? AND client_id = ? AND id < ?
                AND closed_at IS NOT NULL""", (r["channel"], r["client_id"], r["id"]))[0]
-        messages = [m.__dict__ for m in self.chatlog.messages(r["channel"], r["client_id"], prev, r["closed_at"])]
+        by_id = self.chatlog.for_conversation(r["id"])
+        logged = by_id or self.chatlog.messages(r["channel"], r["client_id"], prev, r["closed_at"])
+        messages = [m.__dict__ for m in logged]
         if not messages and r["handoff_id"] is not None:
             messages = self._from_handoff(r["handoff_id"])
         return {**self._session_row(r, self._client_names()), "messages": messages}

@@ -1,10 +1,10 @@
 """Every message of every client session, for the admin panel (SQLite, independent of the channel).
 
 The client bot logs what the client wrote, what the bot answered, what an operator replied, and
-events such as a hand-off or the end of a conversation. A session is a conversation from
-ai_support/feedback.py: its messages are the client's messages after the previous conversation
-ended, up to the moment this one ended (or now, if it is still open). Card numbers, PINFL, phones
-and balances are masked before saving, like everywhere else.
+system events such as a hand-off or the end of a conversation. A session is a conversation from
+ai_support/feedback.py: its messages are those saved with its conversation_id, or else the client's
+messages after the previous conversation ended, up to the moment this one ended (or now, if open).
+Card numbers, PINFL, phones and balances are masked before saving, like everywhere else.
 """
 from __future__ import annotations
 
@@ -21,18 +21,20 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     channel       TEXT NOT NULL,
     client_id     TEXT NOT NULL,
-    sender        TEXT NOT NULL,          -- 'client' | 'bot' | 'operator' | 'event'
-    kind          TEXT NOT NULL DEFAULT 'text',   -- 'text' | 'photo' | 'voice' | 'document'
-    text          TEXT NOT NULL DEFAULT '',
+    conversation_id INTEGER,              -- feedback conversations.id, when known
+    handoff_id    INTEGER,
+    sender        TEXT NOT NULL,          -- 'client' | 'bot' | 'operator' | 'system'
     operator_id   TEXT,
     operator_name TEXT,
-    handoff_id    INTEGER,
+    kind          TEXT NOT NULL DEFAULT 'text',   -- 'text' | 'photo' | 'voice' | 'audio' | 'document'
+    text          TEXT NOT NULL DEFAULT '',
     created_at    TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS chat_messages_client ON chat_messages (channel, client_id, created_at);
 """
 
-CLIENT, BOT, OPERATOR, EVENT = "client", "bot", "operator", "event"
+CLIENT, BOT, OPERATOR, SYSTEM = "client", "bot", "operator", "system"
+EVENT = SYSTEM  # events such as "handed to an operator" or "conversation ended"
 
 
 @dataclass
@@ -58,18 +60,37 @@ class ChatLog:
         self._lock = threading.Lock()
         with self._lock, self._db:
             self._db.executescript(_SCHEMA)
+            cols = {r["name"] for r in self._db.execute("PRAGMA table_info(chat_messages)")}
+            if "conversation_id" not in cols:
+                self._db.execute("ALTER TABLE chat_messages ADD COLUMN conversation_id INTEGER")
 
     def add(self, channel: str, client_id: str, sender: str, text: str = "", kind: str = "text",
-            operator_id: str | None = None, operator_name: str | None = None, handoff_id: int | None = None) -> int:
+            operator_id: str | None = None, operator_name: str | None = None, handoff_id: int | None = None,
+            conversation_id: int | None = None) -> int:
         with self._lock, self._db:
             cur = self._db.execute(
-                """INSERT INTO chat_messages (channel, client_id, sender, kind, text, operator_id, operator_name,
-                                             handoff_id, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (channel, client_id, sender, kind, mask_pii((text or "").strip()), operator_id, operator_name,
-                 handoff_id, _now()),
+                """INSERT INTO chat_messages (channel, client_id, conversation_id, handoff_id, sender, operator_id,
+                                             operator_name, kind, text, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (channel, client_id, conversation_id, handoff_id, sender, operator_id, operator_name, kind,
+                 mask_pii((text or "").strip()), _now()),
             )
         return cur.lastrowid
+
+    def for_conversation(self, conversation_id: int) -> list[ChatMessage]:
+        """Messages saved with this conversation's id, oldest first."""
+        with self._lock:
+            rows = self._db.execute("SELECT * FROM chat_messages WHERE conversation_id = ? ORDER BY id",
+                                    (conversation_id,)).fetchall()
+        return [_message(r) for r in rows]
+
+    def for_client(self, channel: str, client_id: str, limit: int = 500) -> list[ChatMessage]:
+        """The client's latest messages, oldest first."""
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT * FROM chat_messages WHERE channel = ? AND client_id = ? ORDER BY id DESC LIMIT ?",
+                (channel, client_id, limit)).fetchall()
+        return [_message(r) for r in reversed(rows)]
 
     def messages(self, channel: str, client_id: str, after: str | None = None, until: str | None = None,
                  limit: int = 500) -> list[ChatMessage]:
@@ -85,8 +106,11 @@ class ChatLog:
             rows = self._db.execute(
                 f"SELECT * FROM chat_messages WHERE {' AND '.join(where)} ORDER BY id LIMIT ?", (*args, limit)
             ).fetchall()
-        return [ChatMessage(r["id"], r["sender"], r["kind"], r["text"], r["operator_name"], r["created_at"])
-                for r in rows]
+        return [_message(r) for r in rows]
 
     def close(self) -> None:
         self._db.close()
+
+
+def _message(r: sqlite3.Row) -> ChatMessage:
+    return ChatMessage(r["id"], r["sender"], r["kind"], r["text"], r["operator_name"], r["created_at"])

@@ -94,7 +94,7 @@ def test_session_chat_splits_by_conversation(tmp_path):
     log.add("telegram", "7", "bot", "Javob")
     feedback.bot_answered("telegram", "7", "uz_latn", "cards")
     feedback.end("telegram", "7", "client")
-    log.add("telegram", "7", "event", "Клиент завершил разговор")
+    log.add("telegram", "7", "system", "Клиент завершил разговор")
     data = AdminData(db)
     with data._lock:
         data._db.execute("UPDATE conversations SET closed_at = '2000-01-01T00:00:00+00:00'")
@@ -107,7 +107,7 @@ def test_session_chat_splits_by_conversation(tmp_path):
     assert [s["topic"] for s in sessions] == ["payments", "cards"]
     assert sessions[0]["client_name"] == "Client Seven" and sessions[0]["status"] == "open"
     old = data.session(sessions[1]["id"])
-    assert [m["sender"] for m in old["messages"]] == ["client", "bot", "event"]
+    assert [m["sender"] for m in old["messages"]] == ["client", "bot", "system"]
     assert "1234" not in old["messages"][0]["text"]  # card number masked
     new = data.session(sessions[0]["id"])
     assert [m["text"] for m in new["messages"]] == ["Yana savol"]
@@ -124,7 +124,7 @@ def test_session_before_chat_log_rebuilt_from_handoff(tmp_path):
     feedback.operator_replied("telegram", "7", hid, "uz_latn", "10", "Ali")
     data = AdminData(db)
     s = data.session(data.sessions()[0]["id"])
-    assert [m["sender"] for m in s["messages"]] == ["client", "bot", "event", "operator"]
+    assert [m["sender"] for m in s["messages"]] == ["client", "bot", "system", "operator"]
     assert s["operator_name"] == "Ali"
     ops = data.operator_list()
     assert ops[0]["user_id"] == "10" and not ops[0]["registered"] and ops[0]["replies"] == 1
@@ -266,3 +266,14 @@ def test_client_question_and_bot_answer_are_logged():
     asyncio.run(bot._answer([message], FakeTgBot()))
     logged = bot.chatlog.messages("telegram", "7")
     assert [(m.sender, m.text) for m in logged] == [("client", "Karta qo'shilmayapti"), ("bot", "Ok")]
+
+
+def test_session_prefers_messages_saved_with_conversation_id(tmp_path):
+    db = tmp_path / "bot.sqlite3"
+    users, handoffs, feedback, log = stores(db)
+    conv = feedback.bot_answered("telegram", "7", "ru", "cards")
+    log.add("telegram", "7", "client", "без id")
+    log.add("telegram", "7", "client", "с id", conversation_id=conv.id)
+    data = AdminData(db)
+    assert [m["text"] for m in data.session(conv.id)["messages"]] == ["с id"]
+    assert [m.text for m in log.for_client("telegram", "7")] == ["без id", "с id"]
