@@ -187,7 +187,7 @@ def test_quick_question_asked_in_chosen_language():
     q = QUICK_QUESTIONS[0]
     asyncio.run(bot.on_client_message(client_msg(chat, q.label[Lang.RU]), chat))  # old keyboard label
     assert llm.calls[0][1] == q.question[Lang.UZ_CYRL]
-    assert chat.sent[-1][0] == "Javob"
+    assert chat.sent[-2][0] == "Javob" and chat.sent[-1][0] == t("rate_bot", Lang.UZ_CYRL)
 
 
 def test_quick_question_forbidden_answer_replaced():
@@ -233,7 +233,8 @@ def test_mini_menu_button_asks_question_in_chosen_language():
     users.set_language("telegram", "42", Lang.RU)
     asyncio.run(bot.on_quick_question(callback(chat, "q:add_card"), chat))
     assert llm.calls[0][1] == QUICK_QUESTIONS[0].question[Lang.RU]
-    assert chat.sent[-1] == ("Kartalarim bo'limiga kiring.", None)
+    assert chat.sent[-2] == ("Kartalarim bo'limiga kiring.", None)
+    assert chat.sent[-1][0] == t("rate_bot", Lang.UZ_LATN)
 
 
 def test_mini_menu_forbidden_answer_replaced():
@@ -313,6 +314,7 @@ def test_own_id_as_support_chat_still_answered_as_client():
 
 # --- Saved escalations, operator replies and learning from them ---------------------------------
 
+from ai_support import guardrails
 from ai_support.handoffs import HandoffStore
 
 
@@ -357,7 +359,8 @@ def test_operator_reply_relayed_saved_and_offered_as_candidate():
     post = tg._next
     support = Chat()
     asyncio.run(bot.on_operator_reply(operator_msg(support, "Обновление долга занимает время, проверьте завтра.", post), tg))
-    assert tg.sent[-1] == (42, "Обновление долга занимает время, проверьте завтра.")
+    assert tg.sent[-2] == (42, "Обновление долга занимает время, проверьте завтра.")
+    assert tg.sent[-1] == (42, t("rate_operator", Lang.RU))
     c = handoffs.candidates()[0]
     assert c.question == "Квартплата не обновилась после оплаты" and c.language == "ru"
     assert f"#{c.id}" in support.sent[-1][0] and "/approve" in support.sent[-1][0]
@@ -372,7 +375,7 @@ def test_escalation_link_survives_bot_restart(tmp_path):
                                    UserStore(":memory:"), HandoffStore(db))
     assert restarted.is_handoff_reply(operator_msg(Chat(), "Javob", post))
     asyncio.run(restarted.on_operator_reply(operator_msg(Chat(), "Javob", post), tg))
-    assert tg.sent[-1] == (42, "Javob")
+    assert tg.sent[-2] == (42, "Javob")
 
 
 def test_approve_updates_bot_knowledge():
@@ -419,3 +422,231 @@ def test_clients_cannot_approve():
     # Review commands only work in the support chat; a client's /approve is just a message to the bot.
     assert route(-100123, 42, "/approve 1") == ["client"]
     assert route(-100123, -100123, "/approve 1") == ["approve"]
+
+
+# --- Ratings and assessments of clients --------------------------------------------------------
+
+from ai_support.feedback import Assessment, FeedbackStore
+
+LEAKS = ("Уровень", "тон", "грубо", "вежливо", "AI-оценка", "Грубил", "требует внимания")
+
+
+class RatingTG(SupportBot):
+    """Telegram stand-in that also records deleted rating prompts."""
+
+    def __init__(self):
+        super().__init__()
+        self.deleted = []
+
+    async def send_message(self, chat, text, reply_markup=None, **_):
+        posted = await super().send_message(chat, text)
+        self.sent[-1] = (chat, text, reply_markup)
+        return posted
+
+    async def delete_message(self, chat, message_id):
+        self.deleted.append((chat, message_id))
+
+
+class ClientChat(Chat):
+    """Client chat whose sent messages have ids, like Telegram."""
+
+    def __init__(self):
+        super().__init__()
+        self._next = 0
+
+    async def answer(self, text, reply_markup=None, **_):
+        await super().answer(text, reply_markup)
+        self._next += 1
+        return NS(message_id=self._next)
+
+
+def rate_callback(chat, data, uid=42):
+    edits = []
+
+    async def noop(*_, **__):
+        pass
+
+    async def edit_text(text, **_):
+        edits.append(text)
+    cb = NS(data=data, from_user=NS(id=uid, username="ali", full_name="Ali", language_code="ru"),
+            message=NS(chat=NS(id=uid), answer=chat.answer, edit_text=edit_text), answer=noop)
+    return cb, edits
+
+
+def rating_bot(llm):
+    feedback = FeedbackStore(":memory:")
+    bot = TelegramSupportBot(Settings(support_chat_id=-100123), SupportEngine(llm, FakeSTT()),
+                             UserStore(":memory:"), HandoffStore(":memory:"), feedback)
+    return bot, feedback
+
+
+def rate_data(kb):
+    return kb.inline_keyboard[0][3].callback_data  # the 4⭐ button
+
+
+def test_bot_answer_asks_rating_and_only_latest_keeps_buttons():
+    llm = FakeLLM(answer("Kartalarim bo'limiga kiring.", "uz_latn", topic="add_card"))
+    bot, feedback = rating_bot(llm)
+    chat, tg = ClientChat(), RatingTG()
+    asyncio.run(bot.on_client_message(client_msg(chat, "Karta qo'shilmayapti"), tg))
+    text, kb = chat.sent[-1]
+    assert text == t("rate_bot", Lang.UZ_LATN)
+    labels = [b.text for row in kb.inline_keyboard for b in row]
+    assert labels[:5] == ["1⭐", "2⭐", "3⭐", "4⭐", "5⭐"] and t("rate_not_helped", Lang.UZ_LATN) in labels
+    assert t("rate_no_answer", Lang.UZ_LATN) not in labels  # the bot always answers
+    asyncio.run(bot.on_client_message(client_msg(chat, "Yana savol"), tg))
+    assert tg.deleted == [(42, 2)]  # the first prompt is removed
+
+
+def test_client_rates_bot_and_ai_assesses_client_once():
+    llm = FakeLLM(answer("Kartalarim bo'limiga kiring.", "uz_latn", topic="add_card"))
+    bot, feedback = rating_bot(llm)
+    chat, tg = ClientChat(), RatingTG()
+    asyncio.run(bot.on_client_message(client_msg(chat, "Karta qo'shilmayapti"), tg))
+    data = rate_data(chat.sent[-1][1])
+    cb, edits = rate_callback(chat, data)
+    asyncio.run(bot.on_rate(cb, tg))
+    assert edits == [f"{t('rate_thanks', Lang.UZ_LATN)} 4⭐"]
+    assert feedback.score("bot").count == 1 and len(llm.assessed) == 1
+    asyncio.run(bot.on_rate(rate_callback(chat, data.replace(":4", ":5"))[0], tg))  # changed the rating
+    assert feedback.score("bot").average == 5.0 and len(llm.assessed) == 1
+
+
+def test_low_bot_rating_points_to_operator_without_promises():
+    llm = FakeLLM(answer("Kartalarim bo'limiga kiring.", "ru", topic="add_card"))
+    bot, _ = rating_bot(llm)
+    chat, tg = ClientChat(), RatingTG()
+    asyncio.run(bot.on_client_message(client_msg(chat, "Не добавляется карта"), tg))
+    request_id = chat.sent[-1][1].inline_keyboard[0][0].callback_data.split(":")[1]
+    asyncio.run(bot.on_rate(rate_callback(chat, f"rate:{request_id}:nohelp")[0], tg))
+    assert chat.sent[-1][0] == t("rate_bot_low", Lang.RU)
+    assert all(not guardrails.find_violations(text) for text, _ in chat.sent)
+    assert not any(any(w in text for w in LEAKS) for text, _ in chat.sent)
+
+
+def test_other_client_cannot_rate():
+    llm = FakeLLM(answer("Ok", "ru", topic="add_card"))
+    bot, feedback = rating_bot(llm)
+    chat, tg = ClientChat(), RatingTG()
+    asyncio.run(bot.on_client_message(client_msg(chat, "Карта"), tg))
+    asyncio.run(bot.on_rate(rate_callback(chat, rate_data(chat.sent[-1][1]), uid=43)[0], tg))
+    assert feedback.score().count == 0
+
+
+def test_escalation_carries_ai_assessment_level_and_tone_buttons_for_support_only():
+    llm = FakeLLM(answer("Передаю специалисту.", "ru", escalate=True, reason="no answer"),
+                  assessment=Assessment("rude", "Долг не обновился", "Показывать квитанцию"))
+    bot, feedback = rating_bot(llm)
+    chat, tg = ClientChat(), RatingTG()
+    asyncio.run(bot.on_client_message(client_msg(chat, "Квартплата не обновилась"), tg))
+    support_chat, summary, kb = tg.sent[-1]
+    assert support_chat == -100123
+    assert "тон: грубо" in summary and "Суть проблемы: Долг не обновился" in summary
+    assert "Предложения: Показывать квитанцию" in summary and "Уровень клиента: C" in summary
+    assert [b.callback_data for b in kb.inline_keyboard[0]] == ["ctone:polite", "ctone:calm", "ctone:rude"]
+    # The client sees only the hand-off, no rating of the bot and nothing about the assessment.
+    assert [text for text, _ in chat.sent] == ["Передаю специалисту.\n\n" + t("handoff", Lang.RU)]
+
+
+def escalated_with_feedback(llm=None):
+    llm = llm or FakeLLM(answer("Передаю специалисту.", "ru", escalate=True, reason="no answer"))
+    bot, feedback = rating_bot(llm)
+    chat, tg = ClientChat(), RatingTG()
+    asyncio.run(bot.on_client_message(client_msg(chat, "Квартплата не обновилась"), tg))
+    return bot, feedback, chat, tg, tg._next
+
+
+def test_escalation_expires_open_bot_rating():
+    llm = FakeLLM(answer("Kartalarim bo'limiga kiring.", "ru", topic="add_card"))
+    bot, feedback = rating_bot(llm)
+    chat, tg = ClientChat(), RatingTG()
+    asyncio.run(bot.on_client_message(client_msg(chat, "Карта"), tg))
+    data = rate_data(chat.sent[-1][1])
+    asyncio.run(bot.on_client_message(client_msg(chat, OPERATOR_LABEL[Lang.RU]), tg))
+    assert tg.deleted == [(42, 2)]
+    asyncio.run(bot.on_rate(rate_callback(chat, data)[0], tg))
+    assert feedback.score().count == 0
+
+
+def test_operator_reply_asks_client_to_rate_operator():
+    bot, feedback, chat, tg, post = escalated_with_feedback()
+    asyncio.run(bot.on_operator_reply(operator_msg(Chat(), "Проверьте раздел «Tarix».", post), tg))
+    client, text, kb = tg.sent[-1]
+    assert client == 42 and text == t("rate_operator", Lang.RU)
+    labels = [b.text for row in kb.inline_keyboard for b in row]
+    assert t("rate_no_answer", Lang.RU) in labels and t("rate_not_helped", Lang.RU) in labels
+    first_prompt = tg._next
+    asyncio.run(bot.on_operator_reply(operator_msg(Chat(), "Ещё уточнение.", post), tg))
+    assert tg.deleted == [(42, first_prompt)]
+    data = tg.sent[-1][2].inline_keyboard[1][0].callback_data  # "no answer"
+    asyncio.run(bot.on_rate(rate_callback(chat, data)[0], tg))
+    score = feedback.score("operator")
+    assert score.count == 1 and score.no_answer == 1 and feedback.operator_scores() == [("Operator", 1.0, 1)]
+
+
+def tone_callback(post, tone, chat=-100123):
+    answers = []
+
+    async def answer(text=None, **_):
+        answers.append(text)
+    return NS(data=f"ctone:{tone}", from_user=NS(id=9, username="op", full_name="Operator"),
+              message=NS(chat=NS(id=chat), message_id=post), answer=answer), answers
+
+
+def test_operator_rates_client_tone_and_note():
+    bot, feedback, chat, tg, post = escalated_with_feedback()
+    cb, answers = tone_callback(post, "rude")
+    asyncio.run(bot.on_client_tone(cb))
+    assert answers == ["Сохранено: грубо. Уровень клиента: C · требует внимания"]
+    assert feedback.tones("telegram", "42") == ["rude"]  # the operator's tone replaces the AI's for this case
+    support = Chat()
+    asyncio.run(bot.on_client_note(operator_msg(support, "/client Долг не обновился | Добавить push", post)))
+    assert "Заметка о клиенте сохранена" in support.sent[-1][0]
+    row = feedback._db.execute("SELECT * FROM client_assessments WHERE source = 'operator' ORDER BY id DESC").fetchone()
+    assert (row["tone"], row["problem"], row["suggestions"]) == ("rude", "Долг не обновился", "Добавить push")
+    # Nothing of this reached the client.
+    assert not any(any(w in text for w in LEAKS) for text, _ in chat.sent)
+
+
+def test_client_note_needs_reply_to_escalation():
+    bot, *_ = escalated_with_feedback()
+    support = Chat()
+    asyncio.run(bot.on_client_note(NS(text="/client текст", chat=NS(id=-100123), reply_to_message=None,
+                                      from_user=None, answer=support.answer)))
+    assert "/client" in support.sent[-1][0]
+
+
+def test_tone_button_on_unknown_post():
+    bot, *_ = escalated_with_feedback()
+    cb, answers = tone_callback(999, "calm")
+    asyncio.run(bot.on_client_tone(cb))
+    assert answers == ["Эскалация не найдена."]
+
+
+def test_rating_command_shows_anonymous_rating():
+    bot, feedback, chat, tg, post = escalated_with_feedback()
+    asyncio.run(bot.on_operator_reply(operator_msg(Chat(), "Ответ", post), tg))
+    asyncio.run(bot.on_rate(rate_callback(chat, rate_data(tg.sent[-1][2]))[0], tg))
+    support = Chat()
+    asyncio.run(bot.on_rating(operator_msg(support, "/rating", None)))
+    text = support.sent[-1][0]
+    assert "Анонимный рейтинг" in text and "4.0 ★★★★☆" in text and "chat 42" not in text and "@ali" not in text
+
+
+def test_client_command_routed_before_operator_relay():
+    """/client as a reply to an escalation post is a note, never relayed to the client."""
+    class R(RoutingBot):
+        async def on_client_note(self, message):
+            self.routed.append("note")
+
+    bot = R(-100123)
+    bot.handoffs.open("telegram", "555", "-100123", "5", BotReply("…", Lang.RU, escalate=True))
+    dp = Dispatcher()
+    dp.include_router(bot.router)
+    chat = {"id": -100123, "type": "supergroup", "title": "support"}
+    data = {"message_id": 10, "date": datetime.now(), "chat": chat, "text": "/client грубил",
+            "entities": [{"type": "bot_command", "offset": 0, "length": 7}],
+            "from": {"id": 9, "is_bot": False, "first_name": "Op"},
+            "reply_to_message": {"message_id": 5, "date": datetime.now(), "chat": chat, "text": "Эскалация"}}
+    asyncio.run(dp.feed_update(Bot("1:TEST"), Update(update_id=1, message=data)))
+    assert bot.routed == ["note"]

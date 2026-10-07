@@ -52,3 +52,21 @@ def test_request_shape_and_parse():
 def test_failures_raise_llm_error(kwargs):
     with pytest.raises(LLMError):
         asyncio.run(make(**kwargs).answer([], "x", []))
+
+
+def test_assess_request_and_parse():
+    seen = []
+    llm = make(seen=seen, text=json.dumps({"tone": "rude", "problem": "Перевод", "suggestions": ""}))
+    a = asyncio.run(llm.assess([Turn("user", "Где деньги?!"), Turn("assistant", "Передаю специалисту.")]))
+    assert (a.tone, a.problem) == ("rude", "Перевод")
+    body = json.loads(seen[0].content)
+    assert body["output_config"]["format"]["schema"]["properties"]["tone"]["enum"] == ["polite", "calm", "rude"]
+    assert body["output_config"]["effort"] == "low"
+    assert "Клиент: Где деньги?!" in body["messages"][0]["content"]
+    assert body["system"][0]["text"] != "SYSTEM"  # its own prompt, not the support prompt
+
+
+@pytest.mark.parametrize("text", [json.dumps({"tone": "angry", "problem": "", "suggestions": ""}), "[]", "x"])
+def test_assess_invalid_output(text):
+    with pytest.raises(LLMError):
+        asyncio.run(make(text=text).assess([Turn("user", "x")]))

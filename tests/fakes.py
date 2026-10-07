@@ -2,6 +2,7 @@ import io
 
 from PIL import Image as PILImage
 
+from ai_support.feedback import Assessment
 from ai_support.llm import LLMError, ModelAnswer
 from ai_support.models import Audio
 from ai_support.stt import STTError
@@ -12,9 +13,11 @@ def answer(text="Ok", lang="ru", escalate=False, reason="", pii=False, topic="ot
 
 
 class FakeLLM:
-    def __init__(self, result=None, error=None):
+    def __init__(self, result=None, error=None, assessment=None):
         self.result = result or answer()
         self.error = error
+        self.assessment = assessment or Assessment("calm", "Клиент спрашивает о платеже.", "")
+        self.assessed = []
         self.calls = []
         self.system_prompts = []
 
@@ -26,6 +29,13 @@ class FakeLLM:
         if self.error:
             raise LLMError(self.error)
         return self.result
+
+
+    async def assess(self, history):
+        self.assessed.append(list(history))
+        if self.error:
+            raise LLMError(self.error)
+        return self.assessment
 
 
 class FakeSTT:

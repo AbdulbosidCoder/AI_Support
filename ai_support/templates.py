@@ -76,6 +76,48 @@ _T: dict[str, dict[Lang, str]] = {
         Lang.RU: "Опишите проблему или отправьте скриншот приложения.",
         Lang.EN: "Please describe the problem or send a screenshot of the app.",
     },
+    "rate_bot": {
+        Lang.UZ_LATN: "Javob qanchalik yordam berdi? Baholang:",
+        Lang.UZ_CYRL: "Жавоб қанчалик ёрдам берди? Баҳоланг:",
+        Lang.RU: "Насколько помог ответ? Оцените:",
+        Lang.EN: "How helpful was the answer? Please rate:",
+    },
+    "rate_operator": {
+        Lang.UZ_LATN: "Qo'llab-quvvatlash xodimi qanchalik yordam bera oldi? Baholang:",
+        Lang.UZ_CYRL: "Қўллаб-қувватлаш ходими қанчалик ёрдам бера олди? Баҳоланг:",
+        Lang.RU: "Насколько помог специалист поддержки? Оцените:",
+        Lang.EN: "How much did the support specialist help? Please rate:",
+    },
+    "rate_no_answer": {
+        Lang.UZ_LATN: "❌ Javob bermadi",
+        Lang.UZ_CYRL: "❌ Жавоб бермади",
+        Lang.RU: "❌ Не ответили",
+        Lang.EN: "❌ No answer",
+    },
+    "rate_not_helped": {
+        Lang.UZ_LATN: "😕 Yordam bera olmadi",
+        Lang.UZ_CYRL: "😕 Ёрдам бера олмади",
+        Lang.RU: "😕 Не смогли помочь",
+        Lang.EN: "😕 Couldn't help",
+    },
+    "rate_thanks": {
+        Lang.UZ_LATN: "Rahmat! Bahoingiz qabul qilindi.",
+        Lang.UZ_CYRL: "Раҳмат! Баҳоингиз қабул қилинди.",
+        Lang.RU: "Спасибо! Ваша оценка принята.",
+        Lang.EN: "Thank you! Your rating has been saved.",
+    },
+    "rate_bot_low": {
+        Lang.UZ_LATN: "Muammo hal bo'lmagan bo'lsa, «👨‍💼 Operator» tugmasini bosing — murojaatingizni qo'llab-quvvatlash xodimiga yuboramiz.",
+        Lang.UZ_CYRL: "Муаммо ҳал бўлмаган бўлса, «👨‍💼 Оператор» тугмасини босинг — мурожаатингизни қўллаб-қувватлаш ходимига юборамиз.",
+        Lang.RU: "Если проблема не решена, нажмите «👨‍💼 Оператор», и мы передадим обращение специалисту поддержки.",
+        Lang.EN: "If the problem isn't solved, tap «👨‍💼 Operator» and we'll pass your request to a support specialist.",
+    },
+    "rate_expired": {
+        Lang.UZ_LATN: "Bu baholash endi faol emas.",
+        Lang.UZ_CYRL: "Бу баҳолаш энди фаол эмас.",
+        Lang.RU: "Эта оценка уже неактуальна.",
+        Lang.EN: "This rating is no longer active.",
+    },
 }
 
 

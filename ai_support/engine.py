@@ -5,6 +5,7 @@ import logging
 from collections import defaultdict, deque
 
 from . import guardrails
+from .feedback import Assessment
 from .images import MAX_IMAGES_PER_MESSAGE, prepare_image
 from .language import detect_language, is_small_talk
 from .llm import LLMError, ModelAnswer, SupportLLM, Turn
@@ -59,6 +60,20 @@ class SupportEngine:
     def recent_turns(self, user_id: str) -> list[Turn]:
         """The client's recent conversation (PII already masked), saved with a hand-off."""
         return self._store.history(user_id)
+
+    async def assess_client(self, user_id: str) -> Assessment | None:
+        """Internal AI assessment of the client from the recent conversation; None if there is nothing to judge.
+
+        Only for the support team: it never changes what the bot answers.
+        """
+        history = self._store.history(user_id)
+        if not any(turn.role == "user" and turn.text.strip() for turn in history):
+            return None
+        try:
+            return await self._llm.assess(history)
+        except LLMError as e:
+            log.warning("client assessment failed: %s", e)
+            return None
 
     def handoff(self, user_id: str, default: Lang = Lang.UZ_LATN) -> BotReply:
         """Client explicitly asked for a human; `default` is the client's chosen language, if known."""
