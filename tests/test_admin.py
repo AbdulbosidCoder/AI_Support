@@ -251,21 +251,6 @@ def test_only_listed_operators_reach_the_client():
     operator = FakeMessage("Tekshiryapmiz", -100, 10, reply_to=NS(message_id=55))
     asyncio.run(bot.on_operator_reply(operator, tg))
     assert tg.sent[0] == (7, "Tekshiryapmiz")
-    logged = bot.chatlog.messages("telegram", "7")
-    assert [(m.sender, m.text, m.operator_name) for m in logged] == [("operator", "Tekshiryapmiz", "User 10")]
-
-
-def test_client_question_and_bot_answer_are_logged():
-    bot = TelegramSupportBot(Settings(), SupportEngine(FakeLLM(), FakeSTT()))
-    message = FakeMessage("Karta qo'shilmayapti", 7, 7)
-
-    async def to_incoming(messages, tg):
-        from ai_support.models import IncomingMessage
-        return IncomingMessage(user_id="7", text=messages[0].text)
-    bot.to_incoming = to_incoming
-    asyncio.run(bot._answer([message], FakeTgBot()))
-    logged = bot.chatlog.messages("telegram", "7")
-    assert [(m.sender, m.text) for m in logged] == [("client", "Karta qo'shilmayapti"), ("bot", "Ok")]
 
 
 def test_session_prefers_messages_saved_with_conversation_id(tmp_path):

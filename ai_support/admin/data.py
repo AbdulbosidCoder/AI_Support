@@ -13,7 +13,7 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ..chatlog import BOT, CLIENT, EVENT, OPERATOR, ChatLog
+from ..chatlog import BOT, CLIENT, OPERATOR, SYSTEM, ChatLog
 from ..feedback import FeedbackStore
 from ..handoffs import HandoffStore
 from ..operators import Operator, OperatorStore
@@ -169,12 +169,24 @@ class AdminData:
         prev = self._one(
             """SELECT MAX(closed_at) FROM conversations WHERE channel = ? AND client_id = ? AND id < ?
                AND closed_at IS NOT NULL""", (r["channel"], r["client_id"], r["id"]))[0]
-        by_id = self.chatlog.for_conversation(r["id"])
-        logged = by_id or self.chatlog.messages(r["channel"], r["client_id"], prev, r["closed_at"])
-        messages = [m.__dict__ for m in logged]
+        messages = [_chat(m.__dict__) for m in self.chatlog.for_conversation(r["id"])]
+        if not messages:
+            messages = self._window(r["channel"], r["client_id"], prev, r["closed_at"])
         if not messages and r["handoff_id"] is not None:
             messages = self._from_handoff(r["handoff_id"])
         return {**self._session_row(r, self._client_names()), "messages": messages}
+
+    def _window(self, channel: str, client_id: str, after: str | None, until: str | None) -> list[dict]:
+        """Messages saved without a conversation id: the client's messages between two conversation ends."""
+        where, args = ["channel = ?", "client_id = ?"], [channel, client_id]
+        if after:
+            where.append("created_at > ?")
+            args.append(after)
+        if until:
+            where.append("created_at <= ?")
+            args.append(until)
+        rows = self._all(f"SELECT * FROM chat_messages WHERE {' AND '.join(where)} ORDER BY id LIMIT 500", args)
+        return [_chat(dict(r)) for r in rows]
 
     def _from_handoff(self, handoff_id: int) -> list[dict]:
         """A session saved before the chat log existed: the hand-off context and the operator replies."""
@@ -188,7 +200,7 @@ class AdminData:
             out.append(_msg(CLIENT, h["client_text"], h["created_at"]))
         if h["bot_text"]:
             out.append(_msg(BOT, h["bot_text"], h["created_at"]))
-        out.append(_msg(EVENT, "Передано оператору", h["created_at"]))
+        out.append(_msg(SYSTEM, "Передано оператору", h["created_at"]))
         for rep in self._all("SELECT * FROM operator_replies WHERE handoff_id = ? ORDER BY id", (handoff_id,)):
             out.append(_msg(OPERATOR, rep["text"], rep["created_at"], rep["operator_name"]))
         return out
@@ -225,6 +237,11 @@ class AdminData:
         for store in (self.users, self.handoffs, self.feedback, self.chatlog, self.operators):
             store.close()
         self._db.close()
+
+
+def _chat(m: dict) -> dict:
+    """What the panel shows of a logged message."""
+    return {k: m[k] for k in ("id", "sender", "kind", "text", "operator_name", "created_at")}
 
 
 def _msg(sender: str, text: str, at: str, operator_name: str | None = None) -> dict:

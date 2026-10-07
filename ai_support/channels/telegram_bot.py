@@ -15,8 +15,7 @@ it once: the bot if it never reached a person, otherwise the operator. The escal
 for the operator's own assessment (polite / calm / rude); /client adds the operator's note and /rating
 shows the anonymous app-store style rating. Assessments and levels never reach the client.
 
-Every client, bot and operator message is logged (ai_support/chatlog.py) for the admin panel, and
-once an admin added operators (ai_support/operators.py) only they can answer clients.
+Once an admin added operators (ai_support/operators.py, admin bot) only they can answer clients.
 """
 from __future__ import annotations
 
@@ -36,7 +35,6 @@ from aiogram.types import (
     ReplyKeyboardMarkup,
 )
 
-from ..chatlog import BOT as LOG_BOT, CLIENT as LOG_CLIENT, EVENT as LOG_EVENT, OPERATOR as LOG_OPERATOR, ChatLog
 from ..config import Settings
 from ..engine import SupportEngine
 from ..factory import build_engine, load_knowledge
@@ -69,7 +67,6 @@ OPERATOR_END_LABEL = "✅ Завершить разговор"
 TONE_BUTTONS = {"polite": "😊 Вежливо", "calm": "😐 Спокойно", "rude": "😠 Грубо"}
 NOT_OPERATOR = ("Ответ не отправлен клиенту: вас нет в списке операторов. "
                 "Попросите администратора добавить вас в админ-боте.")
-END_EVENTS = {"client": "Клиент завершил разговор", OPERATOR: "Оператор завершил разговор"}
 REVIEW_HELP = (
     "/approve N — добавить в базу знаний как есть\n"
     "/approve N <исправленный ответ> — добавить с вашим текстом (уберите детали конкретного клиента)\n"
@@ -130,17 +127,6 @@ def message_text(message: Message) -> str:
     return (message.text or message.caption or "").strip()
 
 
-def message_kind(message: Message) -> str:
-    """What the client sent, for the chat log: text, photo, voice or document."""
-    if message.photo:
-        return "photo"
-    if message.voice or message.audio:
-        return "voice"
-    if message.document:
-        return "document"
-    return "text"
-
-
 def image_source(message: Message):
     """The downloadable image in a message (largest photo size or an image document), if any."""
     if message.photo:
@@ -154,7 +140,7 @@ def image_source(message: Message):
 class TelegramSupportBot:
     def __init__(self, settings: Settings, engine: SupportEngine, users: UserStore | None = None,
                  handoffs: HandoffStore | None = None, feedback: FeedbackStore | None = None,
-                 chatlog: ChatLog | None = None, operators: OperatorStore | None = None):
+                 operators: OperatorStore | None = None):
         self.settings = settings
         self.engine = engine
         self.users = users or UserStore(":memory:")
@@ -162,8 +148,7 @@ class TelegramSupportBot:
         self.handoffs = handoffs or HandoffStore(":memory:")
         # Client ratings of the bot/operators and assessments of clients (internal only).
         self.feedback = feedback or FeedbackStore(":memory:")
-        # Every message of every session, for the admin panel; operators added by an admin.
-        self.chatlog = chatlog or ChatLog(":memory:")
+        # Operators added by an admin; while the list is empty anyone in the support chat answers.
         self.operators = operators or OperatorStore(":memory:")
         self._albums: MediaGroupCollector[tuple[Message, Bot]] | None = None
         self.router = Router()
@@ -207,13 +192,6 @@ class TelegramSupportBot:
         """A reply to one of the bot's escalation posts."""
         reply_to = message.reply_to_message
         return reply_to is not None and self.handoffs.find(str(message.chat.id), str(reply_to.message_id)) is not None
-
-    def log(self, client_id, sender: str, text: str = "", kind: str = "text", **extra) -> None:
-        """Save one message of the session for the admin panel; logging never breaks answering."""
-        try:
-            self.chatlog.add(CHANNEL, str(client_id), sender, text, kind, **extra)
-        except Exception as e:
-            log.warning("chat log failed: %s", e)
 
     def register_user(self, message: Message) -> User:
         """Store the client (first contact) or refresh their details; keeps the chosen language."""
@@ -278,13 +256,11 @@ class TelegramSupportBot:
         lang = user.lang if user else Lang.UZ_LATN
         chat_id = callback.message.chat.id
         await bot.send_chat_action(chat_id, ChatAction.TYPING)
-        self.log(chat_id, LOG_CLIENT, q.question[lang])
         reply = await self.engine.handle(IncomingMessage(user_id=str(chat_id), text=q.question[lang]))
         await self._deliver(callback.message, bot, reply, callback.from_user)
 
     async def on_operator_command(self, message: Message, bot: Bot) -> None:
         user = self.register_user(message)
-        self.log(message.chat.id, LOG_EVENT, "Клиент позвал оператора")
         await self._deliver(message, bot, self.engine.handoff(str(message.chat.id), user.lang))
 
     async def on_client_message(self, message: Message, bot: Bot) -> None:
@@ -305,7 +281,6 @@ class TelegramSupportBot:
 
     async def _on_menu(self, message: Message, bot: Bot, user: User, action) -> None:
         if action.kind == "operator":
-            self.log(message.chat.id, LOG_EVENT, "Клиент позвал оператора")
             await self._deliver(message, bot, self.engine.handoff(str(message.chat.id), user.lang))
         elif action.kind == "settings":
             await message.answer(t("settings", user.lang), reply_markup=settings_keyboard(user.lang))
@@ -315,7 +290,6 @@ class TelegramSupportBot:
             # A quick question is answered as if the client typed it, in their chosen language.
             await bot.send_chat_action(message.chat.id, ChatAction.TYPING)
             msg = IncomingMessage(user_id=str(message.chat.id), text=action.question.question[user.lang])
-            self.log(message.chat.id, LOG_CLIENT, msg.text)
             await self._deliver(message, bot, await self.engine.handle(msg))
 
     async def _answer(self, messages: list[Message], bot: Bot) -> None:
@@ -324,8 +298,6 @@ class TelegramSupportBot:
         await bot.send_chat_action(first.chat.id, ChatAction.TYPING)
         msg = await self.to_incoming(messages, bot)
         reply = await self.engine.handle(msg)
-        # Voice is logged as its transcript; a photo with its caption.
-        self.log(first.chat.id, LOG_CLIENT, reply.client_text or msg.text, message_kind(first))
         await self._deliver(first, bot, reply)
 
     async def to_incoming(self, messages: list[Message], bot: Bot) -> IncomingMessage:
@@ -359,10 +331,7 @@ class TelegramSupportBot:
         markup = quick_keyboard(reply.language) if reply.show_menu else (end_keyboard(reply.language) if opens else None)
         await message.answer(reply.text, reply_markup=markup)
         client_id = str(message.chat.id)
-        self.log(client_id, LOG_BOT, reply.text)
         handoff_id = await self._escalate(message, bot, reply, user) if reply.escalate else None
-        if reply.escalate:
-            self.log(client_id, LOG_EVENT, "Передано оператору", handoff_id=handoff_id)
         if handoff_id is not None:
             # The conversation reached a person: the operator is rated for it, not the bot.
             self.feedback.escalated(CHANNEL, client_id, handoff_id, reply.language.value, reply.topic)
@@ -415,8 +384,6 @@ class TelegramSupportBot:
             return
         lang = _lang(handoff.language)
         await bot.send_message(int(handoff.client_chat_id), text, reply_markup=end_keyboard(lang))
-        self.log(handoff.client_chat_id, LOG_OPERATOR, text, operator_id=str(u.id) if u else None,
-                 operator_name=operator_name(u), handoff_id=handoff.id)
         self.feedback.operator_replied(CHANNEL, handoff.client_chat_id, handoff.id, lang.value,
                                        str(u.id) if u else None, u.full_name if u else None)
         candidate, created = self.handoffs.add_operator_reply(
@@ -434,7 +401,6 @@ class TelegramSupportBot:
         if ended is None:
             return False
         conversation, request = ended
-        self.log(client_chat_id, LOG_EVENT, END_EVENTS.get(by, "Разговор завершён"))
         lang = _lang(conversation.language)
         text = t("rate_operator" if request.target == OPERATOR else "rate_bot", lang)
         if by == OPERATOR:
@@ -496,9 +462,6 @@ class TelegramSupportBot:
             return
         await callback.answer(t("rate_thanks", lang))
         mark = {"no_answer": t("rate_no_answer", lang), "not_helped": t("rate_not_helped", lang)}
-        who = "оператора" if rated.target == OPERATOR else "бота"
-        outcome = {"no_answer": "не ответили", "not_helped": "не смогли помочь"}.get(rated.outcome, f"{rated.stars}⭐")
-        self.log(client_id, LOG_EVENT, f"Клиент оценил {who}: {outcome}")
         try:
             await callback.message.edit_text(f"{t('rate_thanks', lang)} {mark.get(rated.outcome, f'{rated.stars}⭐')}")
         except Exception:  # message too old to edit: the rating is saved anyway
@@ -599,12 +562,6 @@ def candidate_text(c: Candidate) -> str:
     return "\n".join(lines)
 
 
-def operator_name(u) -> str | None:
-    if u is None:
-        return None
-    return f"{u.full_name} (@{u.username})" if u.username else u.full_name
-
-
 def reviewer_name(message: Message) -> str:
     u = message.from_user
     if u is None:
@@ -648,10 +605,9 @@ async def main() -> None:
     users = UserStore(settings.db_path)
     handoffs = HandoffStore(settings.db_path)
     feedback = FeedbackStore(settings.db_path)
-    chatlog = ChatLog(settings.db_path)
     operators = OperatorStore(settings.db_path)
     dp.include_router(TelegramSupportBot(settings, build_engine(settings, handoffs), users, handoffs, feedback,
-                                         chatlog, operators).router)
+                                         operators=operators).router)
     try:
         await set_commands(bot)
     except Exception as e:  # commands are a convenience; the bot works without them
