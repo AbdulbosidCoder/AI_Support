@@ -356,3 +356,47 @@ def test_photo_without_client_bot_token_is_not_found(tmp_path):
     app = create_app(AdminData(db), TOKEN, frozenset({ADMIN}))
     (status, body), = api(app, ("GET", f"/api/media/{photo}/0", ADMIN, None))
     assert status == 404 and body["error"] == "no_token"
+
+
+def test_overall_and_per_client_statistics(tmp_path):
+    from ai_support.feedback import Assessment
+    db = tmp_path / "bot.sqlite3"
+    users, handoffs, feedback, log = stores(db)
+    users.touch("telegram", "7", "7", "anvar", "Anvar")
+    users.touch("telegram", "8", "8", "bobur", "Bobur")
+    conv = feedback.bot_answered("telegram", "7", "uz_latn", "cards")
+    log.add("telegram", "7", "client", "Karta", conversation_id=conv.id)
+    log.add("telegram", "7", "client", "[фото]", kind="photo", files=["f"], conversation_id=conv.id)
+    log.add("telegram", "7", "bot", "Javob", conversation_id=conv.id)
+    _, req = feedback.end("telegram", "7", "client")
+    feedback.rate(req.id, "7", "4")
+    reply = BotReply("Operatorga", Lang.UZ_LATN, escalate=True, topic="payments", client_text="Pul")
+    hid = handoffs.open("telegram", "7", "-100", "55", reply)
+    feedback.escalated("telegram", "7", hid, "uz_latn", "payments")
+    feedback.operator_replied("telegram", "7", hid, "uz_latn", "10", "Ali")
+    feedback.assess("telegram", "7", "operator", Assessment("polite"), handoff_id=hid)
+    feedback.bot_answered("telegram", "8", "ru", "cards")
+    data = AdminData(db)
+
+    st = data.stats(days=7)
+    assert (st["clients"], st["sessions"], st["escalated"], st["escalation_rate"]) == (2, 3, 1, 33)
+    assert st["topics"][0] == {"name": "cards", "count": 2} and st["media"] == 1
+    assert len(st["daily"]) == 7 and st["daily"][-1]["sessions"] == 3 and st["daily"][-1]["handoffs"] == 1
+    assert st["rating_bot"]["count"] == 1 and st["rating_bot"]["by_stars"]["4"] == 1
+    assert st["languages"] == {"uz_latn": 2, "ru": 1} and st["messages_by"] == {"client": 2, "bot": 1}
+
+    c = data.client_stats("7")
+    assert (c["name"], c["sessions"], c["sessions_open"], c["escalated"]) == ("Anvar", 2, 1, 1)
+    assert c["messages_by"] == {"client": 2, "bot": 1} and c["media"] == 1
+    assert c["operators"] == [{"name": "Ali", "count": 1}] and c["rating_average"] == 4.0
+    assert c["tones"] == {"polite": 1} and {t["name"] for t in c["topics"]} == {"cards", "payments"}
+    assert data.client_stats("999") is None
+
+    app = create_app(data, TOKEN, frozenset({ADMIN}))
+    overall, one, missing, stranger = api(app, ("GET", "/api/stats?days=3", ADMIN, None),
+                                          ("GET", "/api/clients/8/stats", ADMIN, None),
+                                          ("GET", "/api/clients/999/stats", ADMIN, None),
+                                          ("GET", "/api/stats", 7, None))
+    assert overall[0] == 200 and len(overall[1]["daily"]) == 3
+    assert one[0] == 200 and one[1]["name"] == "Bobur" and one[1]["operators"] == []
+    assert missing[0] == 404 and stranger[0] == 403
