@@ -47,6 +47,8 @@ services:
     command: ["tunnel", "--no-autoupdate", "run"]
     environment:
       TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+      # auto (QUIC on UDP 7844, falls back to http2); set http2 in .env if the provider blocks UDP.
+      TUNNEL_TRANSPORT_PROTOCOL: ${TUNNEL_TRANSPORT_PROTOCOL:-auto}
     restart: unless-stopped
     depends_on:
       - admin

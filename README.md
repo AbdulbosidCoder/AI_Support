@@ -213,6 +213,13 @@ python -m ai_support
 4. `docker compose up -d --build` — запустятся `bot`, `admin` и `tunnel`. В админ-боте появится кнопка
    «🖥 Открыть панель».
 
+**Если по домену Cloudflare показывает Error 1033**, к туннелю не подключён ни один `cloudflared`:
+проверьте `docker compose ps` (контейнер `xonsaroy-ai-support-tunnel` должен быть `Up`, не `Restarting`) и
+`docker compose logs --tail=50 tunnel`. В `CLOUDFLARE_TUNNEL_TOKEN` должен быть только сам токен (строка на
+`eyJ…`) без `cloudflared service install`, кавычек и пробелов, и именно того туннеля, где опубликован домен.
+Успешный запуск пишет в лог `Registered tunnel connection`, а туннель в Cloudflare становится Healthy.
+Если в логе `failed to dial … 7844`, провайдер закрывает UDP: добавьте в `.env` `TUNNEL_TRANSPORT_PROTOCOL=http2`.
+
 Без `ADMIN_BOT_TOKEN` сервис `admin` сразу завершается и не перезапускается, клиентский бот работает как раньше.
 
 ## Тесты
