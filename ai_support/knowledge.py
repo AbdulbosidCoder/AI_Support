@@ -54,6 +54,8 @@ class KnowledgeBase:
         for t in self.topics:
             lines.append(f'### topic={t["section"]}/{t["id"]}: {t["title"]}')
             lines.append("Ответ: " + " ".join(f"{i}) {x}" for i, x in enumerate(t["answer_steps"], 1)))
+            if t.get("forbidden"):
+                lines.append("Нельзя: " + " ".join(t["forbidden"]))
             if t.get("escalate_if"):
                 lines.append(f'Эскалация, если: {t["escalate_if"]}')
         # Defense in depth: an answer that breaks a hard rule never reaches the prompt, even if stored.
