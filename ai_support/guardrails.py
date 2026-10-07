@@ -19,7 +19,7 @@ RESTRICTED_REQUESTS: dict[str, list[str]] = {
         r"pul(im|imni|ni)?\s+qaytar", r"qaytarib\s+ber", r"пул(им|имни|ни)?\s+қайтар", r"қайтариб\s+бер",
     ],
     "cancel": [
-        r"отмен(и|ите|ить)\w*\s+(плат|перев|операц)", r"cancel\s+(the\s+|my\s+)?(payment|transfer|transaction)",
+        r"отмен(и|ите|ить)\w*\s+(\w+\s+)?(плат|перев|операц)", r"cancel\s+(the\s+|my\s+)?(payment|transfer|transaction)",
         r"(to'lov|o'tkazma|operatsiya)\w*\s+bekor\s+qil", r"(тўлов|ўтказма|операция)\w*\s+бекор\s+қил",
     ],
     "unblock": [
@@ -76,6 +76,10 @@ FORBIDDEN_ANSWERS: dict[str, list[str]] = {
         # any antifraud statement with a numeric threshold
         r"(антифрод|antifraud|antifrod)\w*.{0,60}(больше|более|свыше|more\s+than|over|dan\s+ortiq|дан\s+ортиқ)\s*\d+",
         r"(критери|правил)\w*\s+антифрод\w*\s*:", r"antifraud\s+(rules|criteria)\s*(are|:)",
+        # confirming a specific security event (e.g. a cloned device or SIM) reveals what antifraud detected
+        r"(sim|сим|устройств|телефон)\S*(\s+\S+){0,2}?\s+клонирован", r"(обнаруж|выявл)\S*\s+клонирован",
+        r"(sim|telefon|qurilma)\S*(\s+\S+)?\s+klonlangan", r"(сим|телефон|қурилма)\S*(\s+\S+)?\s+клонланган",
+        r"(sim|device|phone)\S*\s+(was\s+|has\s+been\s+)?cloned",
     ],
     "financial_advice": [
         r"(советую|рекомендую)\s+(вложить|инвестир|купить\s+акци|взять\s+кредит)",
