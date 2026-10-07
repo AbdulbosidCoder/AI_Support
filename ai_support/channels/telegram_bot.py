@@ -64,7 +64,7 @@ from ..feedback import (
 from ..handoffs import Candidate, HandoffStore, ReviewError
 from ..menu import (
     CHANGE_LANGUAGE_LABEL, CHANGE_PHONE_LABEL, CHOOSE_LANGUAGE, END_LABEL, LANGUAGE_CHOICES, MENU_LABEL, OPERATOR_LABEL,
-    QUICK_QUESTIONS, SETTINGS_LABEL, match_menu, quick_question,
+    BACK_LABEL, CATEGORIES, SETTINGS_LABEL, category, match_menu, quick_question,
 )
 from ..models import Audio, BotReply, Image, IncomingMessage, Lang, VideoAttachment
 from ..operators import OperatorStore
@@ -115,9 +115,9 @@ def phone_keyboard(lang: Lang) -> ReplyKeyboardMarkup:
 
 
 def main_keyboard(lang: Lang) -> InlineKeyboardMarkup:
-    """The client's menu: common questions two per row, then operator and settings, "end conversation" last."""
-    questions = [InlineKeyboardButton(text=q.label[lang], callback_data=f"q:{q.id}") for q in QUICK_QUESTIONS]
-    return InlineKeyboardMarkup(inline_keyboard=[questions[i:i + 2] for i in range(0, len(questions), 2)] + [
+    """The client's menu: topics two per row, then operator and settings, "end conversation" last."""
+    topics = [InlineKeyboardButton(text=c.label[lang], callback_data=f"cat:{c.id}") for c in CATEGORIES]
+    return InlineKeyboardMarkup(inline_keyboard=[topics[i:i + 2] for i in range(0, len(topics), 2)] + [
         [InlineKeyboardButton(text=OPERATOR_LABEL[lang], callback_data="op"),
          InlineKeyboardButton(text=SETTINGS_LABEL[lang], callback_data="settings")],
         [InlineKeyboardButton(text=END_LABEL[lang], callback_data="end")],
@@ -126,6 +126,13 @@ def main_keyboard(lang: Lang) -> InlineKeyboardMarkup:
 
 # Before buttons replaced the reply keyboard, quick questions were also offered as a "mini menu".
 quick_keyboard = main_keyboard
+
+
+def category_keyboard(cat, lang: Lang) -> InlineKeyboardMarkup:
+    """A topic's questions, one per row so the full question fits, and "back" to the topics."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=q.label[lang], callback_data=f"q:{q.id}")] for q in cat.questions
+    ] + [[InlineKeyboardButton(text=BACK_LABEL[lang], callback_data="menu")]])
 
 
 def settings_keyboard(lang: Lang) -> InlineKeyboardMarkup:
@@ -295,6 +302,7 @@ class TelegramSupportBot:
         r.callback_query.register(self.on_settings_button, F.data == "settings")
         r.callback_query.register(self.on_menu_button, F.data == "menu")
         r.callback_query.register(self.on_operator_button, F.data == "op")
+        r.callback_query.register(self.on_category, F.data.startswith("cat:"))
         r.callback_query.register(self.on_quick_question, F.data.startswith("q:"))
         r.callback_query.register(self.on_rate, F.data.startswith("rate:"))
         r.callback_query.register(self.on_end_button, F.data == "end")
@@ -470,6 +478,17 @@ class TelegramSupportBot:
         user = await self._registered_callback(callback)
         if user is not None:
             await self._show(callback, t("main_menu", user.lang), main_keyboard(user.lang))
+
+    async def on_category(self, callback: CallbackQuery) -> None:
+        """A topic in the menu: the menu message turns into that topic's questions."""
+        cat = category((callback.data or "").split(":", 1)[1])
+        if cat is None:
+            await callback.answer()
+            return
+        user = await self._registered_callback(callback)
+        if user is not None:
+            await self._show(callback, f"{cat.label[user.lang]}\n\n{t('pick_question', user.lang)}",
+                             category_keyboard(cat, user.lang))
 
     async def on_settings_button(self, callback: CallbackQuery) -> None:
         user = await self._registered_callback(callback)
