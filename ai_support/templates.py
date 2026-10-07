@@ -17,10 +17,16 @@ _T: dict[str, dict[Lang, str]] = {
         Lang.EN: "Hello! What problem are you facing?",
     },
     "menu_hint": {
-        Lang.UZ_LATN: "Yoki tayyor savollardan birini tanlang:",
-        Lang.UZ_CYRL: "Ёки тайёр саволлардан бирини танланг:",
-        Lang.RU: "Или выберите готовый вопрос:",
-        Lang.EN: "Or pick a common question:",
+        Lang.UZ_LATN: "Yoki mavzuni tanlang:",
+        Lang.UZ_CYRL: "Ёки мавзуни танланг:",
+        Lang.RU: "Или выберите тему:",
+        Lang.EN: "Or choose a topic:",
+    },
+    "pick_question": {
+        Lang.UZ_LATN: "Savolingizni tanlang yoki o'zingiz yozing:",
+        Lang.UZ_CYRL: "Саволингизни танланг ёки ўзингиз ёзинг:",
+        Lang.RU: "Выберите вопрос или напишите свой:",
+        Lang.EN: "Choose a question or write your own:",
     },
     "language_saved": {
         Lang.UZ_LATN: "Til saqlandi: O'zbekcha.",
@@ -77,10 +83,10 @@ _T: dict[str, dict[Lang, str]] = {
         Lang.EN: "Your request is with a support specialist. I pass your messages to them, and they will reply in this chat.",
     },
     "main_menu": {
-        Lang.UZ_LATN: "Asosiy menyu. Muammoingizni yozing yoki tanlang:",
-        Lang.UZ_CYRL: "Асосий меню. Муаммоингизни ёзинг ёки танланг:",
-        Lang.RU: "Главное меню. Опишите проблему или выберите:",
-        Lang.EN: "Main menu. Describe your problem or choose:",
+        Lang.UZ_LATN: "Asosiy menyu. Muammoingizni yozing yoki mavzuni tanlang:",
+        Lang.UZ_CYRL: "Асосий меню. Муаммоингизни ёзинг ёки мавзуни танланг:",
+        Lang.RU: "Главное меню. Опишите проблему или выберите тему:",
+        Lang.EN: "Main menu. Describe your problem or choose a topic:",
     },
     "settings": {
         Lang.UZ_LATN: "Sozlamalar. Kerakli bandni tanlang.",

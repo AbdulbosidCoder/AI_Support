@@ -6,8 +6,8 @@ import pytest
 from ai_support import guardrails
 from ai_support.engine import SupportEngine
 from ai_support.menu import (
-    CHANGE_LANGUAGE_LABEL, CHOOSE_LANGUAGE, END_LABEL, LANGUAGE_CHOICES, OPERATOR_LABEL, QUICK_QUESTIONS, SETTINGS_LABEL,
-    match_menu, menu_rows,
+    CATEGORIES, CHANGE_LANGUAGE_LABEL, CHOOSE_LANGUAGE, END_LABEL, LANGUAGE_CHOICES, OPERATOR_LABEL, QUICK_QUESTIONS,
+    SETTINGS_LABEL, category, match_menu, menu_rows, quick_question,
 )
 from ai_support.models import IncomingMessage, Lang
 from ai_support.templates import t
@@ -24,7 +24,7 @@ def test_every_language_offered_and_greeting_in_three_languages():
 @pytest.mark.parametrize("lang", list(Lang))
 def test_menu_has_all_buttons_in_each_language(lang):
     flat = [label for row in menu_rows(lang) for label in row]
-    assert len(flat) == len(QUICK_QUESTIONS) + 3 and len(set(flat)) == len(flat)
+    assert len(flat) == len(CATEGORIES) + 3 and len(set(flat)) == len(flat)
     assert all(len(row) <= 2 for row in menu_rows(lang))
     assert match_menu(OPERATOR_LABEL[lang]).kind == "operator"
     assert match_menu(SETTINGS_LABEL[lang]).kind == "settings"
@@ -44,6 +44,7 @@ def _fixed_texts():
     for lang in Lang:
         texts += [OPERATOR_LABEL[lang], SETTINGS_LABEL[lang], CHANGE_LANGUAGE_LABEL[lang]]
         texts += [t(k, lang) for k in ("welcome", "menu_hint", "language_saved", "settings", "ask_problem")]
+        texts += [c.label[lang] for c in CATEGORIES] + [t("pick_question", lang)]
         for q in QUICK_QUESTIONS:
             texts += [q.label[lang], q.question[lang]]
     return texts
@@ -77,3 +78,19 @@ def test_quick_question_answer_still_goes_through_guardrails(qid, bad, lang):
     reply = asyncio.run(engine.handle(IncomingMessage("1", q.question[lang])))
     assert llm.calls[0][1] == q.question[lang]
     assert reply.text == t("guardrail", lang) and reply.escalate and reply.guardrail_triggered
+
+
+def test_menu_is_a_tree_of_topics_and_full_questions():
+    assert [c.id for c in CATEGORIES] == ["registration", "cards", "payments", "transfers", "apartment", "security",
+                                          "technical", "profile"]
+    ids = [q.id for q in QUICK_QUESTIONS]
+    assert len(ids) == len(set(ids)) and all(len(f"q:{i}") <= 64 for i in ids)  # Telegram callback_data limit
+    assert category("registration").questions[1].label[Lang.UZ_LATN] == "Ro'yxatdan o'tishda muammo bo'ldi"
+    for c in CATEGORIES:
+        assert c.questions and category(c.id) is c
+        for q in c.questions:
+            assert quick_question(q.id) is q
+            for lang in Lang:
+                # A full question, not a one-word label; short enough to fit a phone-wide button.
+                assert len(q.label[lang].split()) >= 2 and len(q.label[lang]) <= 50, q.label[lang]
+                assert q.question[lang].strip()

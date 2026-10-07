@@ -83,7 +83,7 @@ def test_reply_to_other_chat_image_ignored():
 
 from aiogram.types import InlineKeyboardMarkup, ReplyKeyboardMarkup, ReplyKeyboardRemove
 
-from ai_support.menu import CHOOSE_LANGUAGE, END_LABEL, OPERATOR_LABEL, QUICK_QUESTIONS, SETTINGS_LABEL, quick_question
+from ai_support.menu import CHOOSE_LANGUAGE, END_LABEL, OPERATOR_LABEL, QUICK_QUESTIONS, SETTINGS_LABEL, CATEGORIES, quick_question
 from ai_support.models import BotReply, Lang
 from ai_support.templates import t
 from ai_support.users import UserStore
@@ -175,7 +175,7 @@ def test_choosing_language_then_sharing_phone_registers_and_shows_menu():
     assert done == t("registered", Lang.RU) and isinstance(remove, ReplyKeyboardRemove)
     assert t("welcome", Lang.RU) in welcome and isinstance(menu, InlineKeyboardMarkup)
     data = [b.callback_data for row in menu.inline_keyboard for b in row]
-    assert data == [f"q:{q.id}" for q in QUICK_QUESTIONS] + ["op", "settings", "end"]
+    assert data == [f"cat:{c.id}" for c in CATEGORIES] + ["op", "settings", "end"]
 
 
 def test_someone_elses_contact_does_not_register():
@@ -285,7 +285,7 @@ def test_greeting_gets_short_question_and_mini_menu_without_model():
     asyncio.run(bot.on_client_message(client_msg(chat, "Salom"), chat))
     text, kb = chat.sent[-1]
     assert text.startswith(t("ask_problem", Lang.UZ_LATN)) and not llm.calls
-    assert isinstance(kb, InlineKeyboardMarkup) and kb.inline_keyboard[0][0].callback_data.startswith("q:")
+    assert isinstance(kb, InlineKeyboardMarkup) and kb.inline_keyboard[0][0].callback_data.startswith("cat:")
 
 
 def test_mini_menu_button_asks_question_in_chosen_language():
@@ -608,7 +608,7 @@ def test_end_without_conversation_says_so_and_shows_menu():
     asyncio.run(bot.on_client_message(client_msg(chat, "Salom"), tg))  # a greeting opens nothing
     asyncio.run(bot.on_end_button(end_callback(chat), tg))
     client, text, kb = tg.sent[-1]
-    assert text == t("no_conversation", Lang.UZ_LATN) and kb.inline_keyboard[0][0].callback_data.startswith("q:")
+    assert text == t("no_conversation", Lang.UZ_LATN) and kb.inline_keyboard[0][0].callback_data.startswith("cat:")
     assert feedback.score().count == 0
 
 
@@ -1186,3 +1186,41 @@ def test_panel_rating_edits_the_panel_in_place():
     cb.data = "panel:home"
     asyncio.run(bot.on_panel_button(cb))
     assert edits[-1][1].inline_keyboard[0][0].callback_data == "panel:candidates"
+
+
+def test_menu_tree_topic_then_full_question_in_one_message():
+    llm = FakeLLM(answer("Ilovani yangilang va qayta urinib ko'ring.", "uz_latn", topic="registration/myid"))
+    bot, users = make_bot(llm)
+    chat = AppChat()
+    asyncio.run(bot.on_start(app_msg(chat, "/start")))
+    menu = chat.order[-1]
+    asyncio.run(bot.on_category(chat.tap(menu, "cat:registration")))
+    text, kb = chat.messages[menu]
+    labels = [row[0].text for row in kb.inline_keyboard]
+    assert chat.order == [menu] and text.startswith("📝 Ro'yxatdan o'tish va kirish")
+    assert "Ro'yxatdan o'tishda muammo bo'ldi" in labels and kb.inline_keyboard[-1][0].callback_data == "menu"
+    asyncio.run(bot.on_menu_button(chat.tap(menu, "menu")))  # back to the topics, same message
+    assert chat.order == [menu] and chat.messages[menu][1].inline_keyboard[0][0].callback_data == "cat:registration"
+    asyncio.run(bot.on_category(chat.tap(menu, "cat:registration")))
+    asyncio.run(bot.on_quick_question(chat.tap(menu, "q:registration_problem"), chat))
+    assert chat.messages[menu] == [f"{t('your_question', Lang.UZ_LATN)} Ro'yxatdan o'tishda muammo bo'ldi", None]
+    assert llm.calls[0][1] == "Ro'yxatdan o'tishda muammo bo'ldi" and chat.buttons() == [chat.order[-1]]
+
+
+def test_unknown_topic_ignored():
+    bot, users = make_bot()
+    chat = AppChat()
+    asyncio.run(bot.on_category(chat.tap(1, "cat:nope")))
+    assert chat.order == []
+
+
+@pytest.mark.parametrize("qid,bad", [
+    ("wrong_recipient", "Pulingizni qaytarib beramiz, 2 soat ichida kartangizga tushadi."),
+    ("card_blocked", "Kartangizni blokdan chiqardik."),
+    ("debt_not_updated", "To'lovingiz muvaffaqiyatli o'tdi, qarz 1 soatda yangilanadi."),
+])
+def test_new_quick_questions_forbidden_answers_replaced(qid, bad):
+    bot, users = make_bot(FakeLLM(answer(bad, "uz_latn")))
+    chat = Chat()
+    asyncio.run(bot.on_quick_question(callback(chat, f"q:{qid}"), chat))
+    assert chat.sent[-1][0] == said(t("guardrail", Lang.UZ_LATN))
