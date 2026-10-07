@@ -25,3 +25,8 @@ jobs:
           docker compose run --rm -T bot > out.txt 2>&1 || true
           cat out.txt
           grep -q "TELEGRAM_BOT_TOKEN is not set" out.txt
+      - name: admin container exits cleanly without an admin token
+        run: |
+          docker compose run --rm -T --no-deps admin > admin.txt 2>&1
+          cat admin.txt
+          grep -q "ADMIN_BOT_TOKEN is not set" admin.txt

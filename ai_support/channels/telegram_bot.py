@@ -14,6 +14,8 @@ operator ends it (button under the escalation post, or /end as a reply to it). T
 it once: the bot if it never reached a person, otherwise the operator. The escalation post carries the AI's assessment of the client and buttons
 for the operator's own assessment (polite / calm / rude); /client adds the operator's note and /rating
 shows the anonymous app-store style rating. Assessments and levels never reach the client.
+
+Once an admin added operators (ai_support/operators.py, admin bot) only they can answer clients.
 """
 from __future__ import annotations
 
@@ -64,6 +66,8 @@ CLIENT_NOTE_HELP = ("Ответьте на пост эскалации: /client 
 END_HELP = "Ответьте /end на пост эскалации или нажмите «✅ Завершить разговор» под ним."
 OPERATOR_END_LABEL = "✅ Завершить разговор"
 TONE_BUTTONS = {"polite": "😊 Вежливо", "calm": "😐 Спокойно", "rude": "😠 Грубо"}
+NOT_OPERATOR = ("Ответ не отправлен клиенту: вас нет в списке операторов. "
+                "Попросите администратора добавить вас в админ-боте.")
 REVIEW_HELP = (
     "/approve N — добавить в базу знаний как есть\n"
     "/approve N <исправленный ответ> — добавить с вашим текстом (уберите детали конкретного клиента)\n"
@@ -148,7 +152,8 @@ def image_source(message: Message):
 
 class TelegramSupportBot:
     def __init__(self, settings: Settings, engine: SupportEngine, users: UserStore | None = None,
-                 handoffs: HandoffStore | None = None, feedback: FeedbackStore | None = None):
+                 handoffs: HandoffStore | None = None, feedback: FeedbackStore | None = None,
+                 operators: OperatorStore | None = None):
         self.settings = settings
         self.engine = engine
         self.users = users or UserStore(":memory:")
@@ -156,6 +161,8 @@ class TelegramSupportBot:
         self.handoffs = handoffs or HandoffStore(":memory:")
         # Client ratings of the bot/operators and assessments of clients (internal only).
         self.feedback = feedback or FeedbackStore(":memory:")
+        # Operators added by an admin; while the list is empty anyone in the support chat answers.
+        self.operators = operators or OperatorStore(":memory:")
         self._albums: MediaGroupCollector[tuple[Message, Bot]] | None = None
         # Instruction video id -> Telegram file_id of the copy uploaded by this bot.
         self._video_file_ids: dict[str, str] = {}
@@ -402,9 +409,12 @@ class TelegramSupportBot:
         text = message.text or message.caption
         if handoff is None or not text:
             return
+        u = message.from_user
+        if not self.operators.may_answer(u.id if u else None):
+            await message.answer(NOT_OPERATOR)
+            return
         lang = _lang(handoff.language)
         await bot.send_message(int(handoff.client_chat_id), text, reply_markup=end_keyboard(lang))
-        u = message.from_user
         self.feedback.operator_replied(CHANNEL, handoff.client_chat_id, handoff.id, lang.value,
                                        str(u.id) if u else None, u.full_name if u else None)
         candidate, created = self.handoffs.add_operator_reply(
@@ -626,7 +636,9 @@ async def main() -> None:
     users = UserStore(settings.db_path)
     handoffs = HandoffStore(settings.db_path)
     feedback = FeedbackStore(settings.db_path)
-    dp.include_router(TelegramSupportBot(settings, build_engine(settings, handoffs), users, handoffs, feedback).router)
+    operators = OperatorStore(settings.db_path)
+    dp.include_router(TelegramSupportBot(settings, build_engine(settings, handoffs), users, handoffs, feedback,
+                                         operators=operators).router)
     try:
         await set_commands(bot)
     except Exception as e:  # commands are a convenience; the bot works without them
