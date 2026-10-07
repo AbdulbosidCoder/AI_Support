@@ -38,6 +38,14 @@ CREATE TABLE IF NOT EXISTS handoffs (
     created_at         TEXT NOT NULL,
     UNIQUE (support_chat_id, support_message_id)
 );
+-- Other posts in the support chat that belong to a hand-off (the client's later messages relayed there):
+-- an operator may reply to any of them.
+CREATE TABLE IF NOT EXISTS handoff_posts (
+    support_chat_id    TEXT NOT NULL,
+    support_message_id TEXT NOT NULL,
+    handoff_id         INTEGER NOT NULL REFERENCES handoffs (id),
+    PRIMARY KEY (support_chat_id, support_message_id)
+);
 CREATE TABLE IF NOT EXISTS operator_replies (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     handoff_id    INTEGER NOT NULL REFERENCES handoffs (id),
@@ -75,6 +83,8 @@ class Handoff:
     language: str
     topic: str
     client_text: str
+    support_chat_id: str = ""
+    support_message_id: str = ""
 
 
 @dataclass
@@ -121,13 +131,28 @@ class HandoffStore:
         return cur.lastrowid
 
     def find(self, support_chat_id: str, support_message_id: str) -> Handoff | None:
-        """The hand-off an operator is replying to; survives restarts."""
+        """The hand-off an operator is replying to (its post or a linked one); survives restarts."""
         with self._lock:
             row = self._db.execute(
                 "SELECT * FROM handoffs WHERE support_chat_id = ? AND support_message_id = ?",
                 (support_chat_id, support_message_id),
+            ).fetchone() or self._db.execute(
+                """SELECT h.* FROM handoff_posts p JOIN handoffs h ON h.id = p.handoff_id
+                   WHERE p.support_chat_id = ? AND p.support_message_id = ?""",
+                (support_chat_id, support_message_id),
             ).fetchone()
         return _handoff(row) if row else None
+
+    def get(self, handoff_id: int) -> Handoff | None:
+        with self._lock:
+            row = self._db.execute("SELECT * FROM handoffs WHERE id = ?", (handoff_id,)).fetchone()
+        return _handoff(row) if row else None
+
+    def link_post(self, handoff_id: int, support_chat_id: str, support_message_id: str) -> None:
+        """Another support-chat post of this hand-off: a reply to it reaches the same client."""
+        with self._lock, self._db:
+            self._db.execute("INSERT OR REPLACE INTO handoff_posts VALUES (?, ?, ?)",
+                             (support_chat_id, support_message_id, handoff_id))
 
     def add_operator_reply(self, handoff_id: int, text: str, operator_id: str | None = None,
                            operator_name: str | None = None) -> tuple[Candidate | None, bool]:
@@ -233,7 +258,7 @@ def _question(h: sqlite3.Row) -> str:
 
 def _handoff(row: sqlite3.Row) -> Handoff:
     return Handoff(row["id"], row["channel"], row["client_chat_id"], row["language"], row["topic"] or "",
-                   row["client_text"] or "")
+                   row["client_text"] or "", row["support_chat_id"], row["support_message_id"])
 
 
 def _candidate(row: sqlite3.Row) -> Candidate:

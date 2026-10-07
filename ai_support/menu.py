@@ -89,6 +89,9 @@ SETTINGS_LABEL = {Lang.UZ_LATN: "⚙️ Sozlamalar", Lang.UZ_CYRL: "⚙️ Со�
                   Lang.RU: "⚙️ Настройки", Lang.EN: "⚙️ Settings"}
 END_LABEL = {Lang.UZ_LATN: "✅ Suhbatni yakunlash", Lang.UZ_CYRL: "✅ Суҳбатни якунлаш",
              Lang.RU: "✅ Завершить разговор", Lang.EN: "✅ End conversation"}
+MENU_LABEL = {Lang.UZ_LATN: "🏠 Menyu", Lang.UZ_CYRL: "🏠 Меню", Lang.RU: "🏠 Меню", Lang.EN: "🏠 Menu"}
+CHANGE_PHONE_LABEL = {Lang.UZ_LATN: "📱 Raqamni yangilash", Lang.UZ_CYRL: "📱 Рақамни янгилаш",
+                      Lang.RU: "📱 Обновить номер", Lang.EN: "📱 Update phone number"}
 CHANGE_LANGUAGE_LABEL = {Lang.UZ_LATN: "🌐 Tilni o'zgartirish", Lang.UZ_CYRL: "🌐 Тилни ўзгартириш",
                          Lang.RU: "🌐 Изменить язык", Lang.EN: "🌐 Change language"}
 
