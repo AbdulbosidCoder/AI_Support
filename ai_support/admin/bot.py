@@ -21,14 +21,17 @@ from aiogram.types import (
 )
 
 from ..config import Settings
-from ..operators import OperatorError
+from ..operators import OperatorError, is_phone
 from .data import AdminData, render_overview
 
 log = logging.getLogger(__name__)
 
-ADD_HELP = ("Чтобы добавить оператора, перешлите сюда любое его сообщение или отправьте его Telegram id и имя:\n"
-            "<code>123456789 Имя Фамилия</code>\n\n"
-            "Свой id оператор может узнать, написав этому боту.")
+ADD_HELP = ("Чтобы добавить оператора, отправьте его номер телефона и имя:\n"
+            "<code>+998901234567 Имя Фамилия</code>\n"
+            "или поделитесь его контактом.\n\n"
+            "Оператор открывает клиентский бот, нажимает /start и при регистрации делится этим номером — "
+            "бот сам запомнит его Telegram id. Если он уже зарегистрирован в боте, он станет оператором сразу.\n\n"
+            "Можно и по Telegram id: <code>123456789 Имя</code> или переслать сюда его сообщение.")
 PANEL_LABEL = "🖥 Открыть панель"
 
 
@@ -54,11 +57,24 @@ def back_keyboard(settings: Settings, extra: list[list[InlineKeyboardButton]] | 
 
 
 def parse_operator(text: str) -> tuple[str, str] | None:
-    """'123456 Name Surname' -> ('123456', 'Name Surname'); None if it does not start with an id."""
-    parts = (text or "").strip().split(maxsplit=1)
-    if not parts or not parts[0].isdigit():
+    """'+998 90 123 45 67 Name' -> ('+998901234567', 'Name'); '123456 Name' -> ('123456', 'Name').
+
+    The phone may be written with spaces or dashes; None if the text starts with neither a phone nor an id.
+    """
+    text = (text or "").strip()
+    i = 0
+    while i < len(text) and (text[i].isdigit() or text[i] in "+ -()"):
+        i += 1
+    head, name = text[:i].strip(), text[i:].strip()
+    digits = "".join(ch for ch in head if ch.isdigit())
+    if not digits:
         return None
-    return parts[0], parts[1] if len(parts) > 1 else ""
+    if is_phone(head) or is_phone(digits):
+        return "+" + digits, name
+    first, _, rest = head.partition(" ")
+    if not first.isdigit():
+        return None
+    return first, f"{rest} {name}".strip()
 
 
 def operators_text(data: AdminData) -> str:
@@ -69,8 +85,11 @@ def operators_text(data: AdminData) -> str:
     lines = ["👥 Операторы"]
     for o in ops:
         state = "✅" if o["active"] else ("⛔" if o["registered"] else "❔ не добавлен")
+        if o["registered"] and not o["linked"]:
+            state += " ⏳ ждём регистрации в боте"
         rating = f"{o['rating']}★ ({o['ratings']})" if o["rating"] is not None else "оценок нет"
-        lines.append(f"{state} {o['name']} · id {o['user_id']}\n"
+        ids = " · ".join(x for x in (o["phone"], f"id {o['user_id']}" if o["user_id"] else None) if x)
+        lines.append(f"{state} {o['name']} · {ids}\n"
                      f"   ответов {o['replies']}, сессий {o['sessions']} (открыто {o['sessions_open']}), {rating}")
     return "\n".join(lines)
 
@@ -83,7 +102,7 @@ def operators_keyboard(settings: Settings, data: AdminData) -> InlineKeyboardMar
         else:
             action, label = "on", "➕ Добавить"
         toggles.append([InlineKeyboardButton(text=f"{label}: {o['name']}"[:60],
-                                             callback_data=f"a:op:{o['user_id']}:{action}")])
+                                             callback_data=f"a:op:{o['key']}:{action}")])
     return back_keyboard(settings, toggles)
 
 
@@ -143,6 +162,11 @@ class AdminBot:
         if uid not in self._adding:
             await message.answer("Выберите действие:", reply_markup=menu_keyboard(self.settings))
             return
+        if message.contact is not None:
+            c = message.contact
+            name = " ".join(x for x in (c.first_name, c.last_name) if x)
+            await self._add(message, c.phone_number, name, None)
+            return
         origin = message.forward_origin
         if origin is not None:
             user = getattr(origin, "sender_user", None)
@@ -161,17 +185,22 @@ class AdminBot:
             return
         await self._add(message, parsed[0], parsed[1], None)
 
-    async def _add(self, message: Message, user_id: str, name: str, username: str | None) -> None:
+    async def _add(self, message: Message, value: str, name: str, username: str | None) -> None:
         try:
-            op = self.data.operators.add(user_id, name, username, added_by=str(message.from_user.id))
+            op = self.data.add_operator(value, name, username, added_by=str(message.from_user.id))
         except OperatorError:
             await message.answer(ADD_HELP, parse_mode="HTML")
             return
         self._adding.discard(message.from_user.id)
-        log.info("operator %s added by admin %s", op.user_id, message.from_user.id)
-        await message.answer(f"✅ Оператор добавлен: {op.name} (id {op.user_id}).\n"
-                             "Теперь его ответы в чате поддержки доходят до клиентов.",
-                             reply_markup=back_keyboard(self.settings))
+        log.info("operator %s added by admin %s", op.key, message.from_user.id)
+        if op.linked:
+            text = (f"✅ Оператор добавлен: {op.name} (id {op.user_id}).\n"
+                    "Теперь его ответы в чате поддержки доходят до клиентов.")
+        else:
+            text = (f"✅ Оператор добавлен: {op.name} ({op.phone}).\n"
+                    "Пусть откроет клиентский бот, нажмёт /start и при регистрации поделится этим номером: "
+                    "бот привяжет его Telegram id, и его ответы начнут доходить до клиентов.")
+        await message.answer(text, reply_markup=back_keyboard(self.settings))
 
     async def on_callback(self, callback: CallbackQuery) -> None:
         parts = (callback.data or "").split(":")
@@ -183,9 +212,9 @@ class AdminBot:
         if action == "op" and len(parts) == 4:
             try:
                 if parts[3] == "on" and self.data.operators.get(parts[2]) is None:
-                    known = next((o for o in self.data.operator_list() if o["user_id"] == parts[2]), None)
-                    self.data.operators.add(parts[2], known["name"] if known else "",
-                                            added_by=str(callback.from_user.id))
+                    known = next((o for o in self.data.operator_list() if o["key"] == parts[2]), None)
+                    self.data.add_operator(parts[2], known["name"] if known else "",
+                                           added_by=str(callback.from_user.id))
                 else:
                     self.data.operators.set_active(parts[2], parts[3] == "on")
             except OperatorError:

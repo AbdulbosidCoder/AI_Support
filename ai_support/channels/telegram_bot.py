@@ -26,6 +26,7 @@ Every message of the chat (client, bot, operator, system events) is saved in ai_
 linked to the conversation, so support staff can read sessions as chats.
 
 Once an admin added operators (ai_support/operators.py, admin bot) only they can answer clients.
+An admin adds an operator by phone; registering here with that phone links their Telegram id.
 """
 from __future__ import annotations
 
@@ -92,6 +93,8 @@ PROMPT_RE = re.compile(r"^(📝 Заметка о клиенте|✏️ Испр
 # What the chat log shows for a message without text.
 MEDIA_PLACEHOLDER = {"photo": "[фото]", "voice": "[голосовое сообщение]", "audio": "[аудио]",
                      "document": "[файл]", "text": ""}
+OPERATOR_LINKED = ("Вы подключены как оператор поддержки Xonsaroy Pay. Отвечайте клиентам реплаем на "
+                   "посты бота в чате поддержки — ваши ответы будут доходить до клиентов.")
 NOT_OPERATOR = ("Ответ не отправлен клиенту: вас нет в списке операторов. "
                 "Попросите администратора добавить вас в админ-боте.")
 
@@ -341,6 +344,11 @@ class TelegramSupportBot:
             return
         self.users.set_phone(CHANNEL, user.user_id, contact.phone_number)
         await message.answer(t("registered", user.lang), reply_markup=ReplyKeyboardRemove())
+        # An admin may have added this number as an operator: now we know their Telegram id.
+        operator = self.operators.link(contact.phone_number, user.user_id, message.from_user.username,
+                                       message.from_user.full_name)
+        if operator is not None and operator.active:
+            await message.answer(OPERATOR_LINKED)
         await self._send_welcome(message, user.lang)
 
     async def on_change_language(self, callback: CallbackQuery) -> None:

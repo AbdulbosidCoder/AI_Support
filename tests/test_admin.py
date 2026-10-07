@@ -175,10 +175,12 @@ def test_api_only_for_admins(tmp_path):
 
 def test_api_adds_and_disables_operators(tmp_path):
     app = create_app(AdminData(tmp_path / "db.sqlite3"), TOKEN, frozenset({ADMIN}))
-    added, bad, off, missing, listed, no_session = api(
+    added, bad, by_phone, phone_off, off, missing, listed, no_session = api(
         app,
         ("POST", "/api/operators", ADMIN, {"user_id": "10", "name": "Ali"}),
         ("POST", "/api/operators", ADMIN, {"user_id": "x"}),
+        ("POST", "/api/operators", ADMIN, {"phone": "+998 90 555 55 55", "name": "Vali"}),
+        ("POST", "/api/operators/%2B998905555555/active", ADMIN, {"active": False}),
         ("POST", "/api/operators/10/active", ADMIN, {"active": False}),
         ("POST", "/api/operators/99/active", ADMIN, {"active": True}),
         ("GET", "/api/operators", ADMIN, None),
@@ -186,9 +188,11 @@ def test_api_adds_and_disables_operators(tmp_path):
     )
     assert added[0] == 200 and added[1]["active"] and added[1]["added_by"] == str(ADMIN)
     assert bad[0] == 400
+    assert by_phone[0] == 200 and by_phone[1]["key"] == "+998905555555" and not by_phone[1]["linked"]
+    assert phone_off[0] == 200 and not phone_off[1]["active"]
     assert off[0] == 200 and not off[1]["active"]
     assert missing[0] == 404
-    assert [o["user_id"] for o in listed[1]] == ["10"]
+    assert sorted(o["key"] for o in listed[1]) == ["+998905555555", "10"]
     assert no_session[0] == 404
 
 
@@ -201,6 +205,68 @@ def test_admin_bot_builds_and_parses_operator(tmp_path):
     assert parse_operator("123 Ali Valiyev") == ("123", "Ali Valiyev")
     assert parse_operator("123") == ("123", "")
     assert parse_operator("Ali 123") is None
+    assert parse_operator("+998 90 123-45-67 Dilnoza Karimova") == ("+998901234567", "Dilnoza Karimova")
+    assert parse_operator("998901234567 Dilnoza") == ("+998901234567", "Dilnoza")
+
+
+def test_many_operators_by_phone_and_linking(tmp_path):
+    from ai_support.operators import is_phone
+    assert is_phone("+998 90 123 45 67") and is_phone("998901234567")
+    assert not is_phone("123456789") and not is_phone("+12")
+    ops = OperatorStore(":memory:")
+    ops.add_phone("+998901111111", "A")
+    ops.add_phone("+998902222222", "B")
+    try:
+        ops.add_phone("+12", "x")
+        raise AssertionError("short phone accepted")
+    except OperatorError:
+        pass
+    assert ops.may_answer(5)  # nobody linked yet
+    assert ops.link("998901111111", 10, "a_user", "Ali") is not None
+    assert ops.link("+998901111111", 11) is None  # number already belongs to another Telegram id
+    assert ops.link("+998903333333", 12) is None  # not an operator's number
+    assert ops.may_answer(10) and not ops.may_answer(11)
+    assert [o.key for o in ops.all()] == ["10", "+998902222222"]
+    ops.set_active("+998902222222", False)
+    assert not ops.get("+998902222222").active
+
+
+def test_operator_added_by_id_then_phone_is_one_row():
+    ops = OperatorStore(":memory:")
+    ops.add(10, "Ali")
+    ops.add_phone("+998901111111", "Ali")
+    ops.link("+998901111111", 10)
+    assert [(o.user_id, o.phone) for o in ops.all()] == [("10", "+998901111111")]
+
+
+def test_old_operator_table_is_migrated(tmp_path):
+    import sqlite3
+    db = tmp_path / "bot.sqlite3"
+    con = sqlite3.connect(db)
+    con.execute("""CREATE TABLE operators (user_id TEXT PRIMARY KEY, name TEXT NOT NULL, username TEXT,
+                   active INTEGER NOT NULL DEFAULT 1, added_by TEXT, created_at TEXT NOT NULL,
+                   updated_at TEXT NOT NULL)""")
+    con.execute("INSERT INTO operators VALUES ('10', 'Ali', NULL, 1, '42', '2026-10-07', '2026-10-07')")
+    con.commit()
+    con.close()
+    op = OperatorStore(db).get("10")
+    assert op.name == "Ali" and op.linked and op.phone is None
+
+
+def test_admin_adds_registered_client_by_phone_at_once(tmp_path):
+    db = tmp_path / "bot.sqlite3"
+    users = UserStore(db)
+    users.touch("telegram", "77", "77", "dilnoza", "Dilnoza")
+    users.set_phone("telegram", "77", "+998 90 123 45 67")
+    data = AdminData(db)
+    op = data.add_operator("+998901234567", "", added_by="42")
+    assert op.user_id == "77" and op.name == "Dilnoza" and op.linked
+    pending = data.add_operator("+998909999999", "Vali")
+    assert not pending.linked
+    listed = {o["key"]: o for o in data.operator_list()}
+    assert listed["+998909999999"]["registered"] and not listed["+998909999999"]["linked"]
+    assert "ждём регистрации" in operators_text(data)
+    assert data.overview()["operators_pending"] == 1
 
 
 # --- client bot: logging and operator list ---------------------------------------------------

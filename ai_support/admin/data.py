@@ -16,7 +16,7 @@ from pathlib import Path
 from ..chatlog import BOT, CLIENT, OPERATOR, SYSTEM, ChatLog
 from ..feedback import FeedbackStore
 from ..handoffs import HandoffStore
-from ..operators import Operator, OperatorStore
+from ..operators import Operator, OperatorStore, is_phone
 from ..users import UserStore
 
 
@@ -68,12 +68,30 @@ class AdminData:
                 "SELECT COUNT(*) FROM conversations WHERE status = 'open' AND handoff_id IS NOT NULL "
                 "AND operator_id IS NULL"),
             "messages_today": count("SELECT COUNT(*) FROM chat_messages WHERE created_at >= ?", today),
-            "operators_active": count("SELECT COUNT(*) FROM operators WHERE active = 1"),
+            "operators_active": count("SELECT COUNT(*) FROM operators WHERE active = 1 AND user_id IS NOT NULL"),
+            "operators_pending": count("SELECT COUNT(*) FROM operators WHERE active = 1 AND user_id IS NULL"),
             "rating_bot": {"average": bot.average, "count": bot.count},
             "rating_operators": {"average": op.average, "count": op.count},
         }
 
     # --- operators ---------------------------------------------------------------------------
+
+    def add_operator(self, value: str, name: str = "", username: str | None = None,
+                     added_by: str | None = None) -> Operator:
+        """Add an operator by phone number or Telegram id.
+
+        By phone: if a client already registered with that number, they become the operator now;
+        otherwise when they press /start in the client bot and share that number.
+        """
+        value = (value or "").strip()
+        if not is_phone(value):
+            return self.operators.add(value, name, username, added_by)
+        op = self.operators.add_phone(value, name, added_by)
+        row = self._one("SELECT user_id, username, full_name FROM users WHERE phone = ? ORDER BY updated_at DESC LIMIT 1",
+                        (op.phone,)) if "phone" in self._user_columns() else None
+        if row is not None:
+            op = self.operators.link(op.phone, row["user_id"], row["username"], row["full_name"]) or op
+        return op
 
     def operator_list(self) -> list[dict]:
         """Every added operator, plus anyone who answered clients without being added, with activity."""
@@ -86,13 +104,17 @@ class AdminData:
         ratings = {r["operator_id"]: r for r in self._all(
             """SELECT operator_id, AVG(stars) AS avg, COUNT(*) AS n FROM rating_requests
                WHERE status = 'rated' AND target = 'operator' AND operator_id IS NOT NULL GROUP BY operator_id""")}
-        known = {o.user_id: o for o in self.operators.all()}
+        known = {o.key: o for o in self.operators.all()}
         result = []
-        for uid in list(known) + [uid for uid in stats if uid not in known]:
-            o: Operator | None = known.get(uid)
+        for key in list(known) + [uid for uid in stats if uid not in known]:
+            o: Operator | None = known.get(key)
+            uid = o.user_id if o else key
             s, c, r = stats.get(uid), sessions.get(uid), ratings.get(uid)
             result.append({
+                "key": key,
                 "user_id": uid,
+                "phone": o.phone if o else None,
+                "linked": o.linked if o else True,
                 "name": o.name if o else (s["name"] if s else uid),
                 "username": o.username if o else None,
                 "registered": o is not None,

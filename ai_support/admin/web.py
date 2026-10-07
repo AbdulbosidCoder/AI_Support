@@ -65,13 +65,14 @@ async def add_operator(request: web.Request) -> web.Response:
         return _json({"error": "bad_json"}, 400)
     admin = request[ADMIN_USER]
     try:
-        op = request.app[DATA].operators.add(
-            str(body.get("user_id", "")), str(body.get("name", "")), body.get("username") or None,
-            added_by=str(admin["id"]))
+        # "phone" (preferred) or "user_id": the operator registers in the client bot with that phone.
+        value = str(body.get("phone") or body.get("user_id") or "")
+        op = request.app[DATA].add_operator(value, str(body.get("name", "")), body.get("username") or None,
+                                            added_by=str(admin["id"]))
     except OperatorError as e:
         return _json({"error": str(e)}, 400)
-    log.info("operator %s added by admin %s", op.user_id, admin["id"])
-    return _json(op.__dict__)
+    log.info("operator %s added by admin %s", op.key, admin["id"])
+    return _json(_operator(op))
 
 
 async def set_operator_active(request: web.Request) -> web.Response:
@@ -80,10 +81,14 @@ async def set_operator_active(request: web.Request) -> web.Response:
     except ValueError:
         return _json({"error": "bad_json"}, 400)
     try:
-        op = request.app[DATA].operators.set_active(request.match_info["user_id"], bool(body.get("active")))
+        op = request.app[DATA].operators.set_active(request.match_info["key"], bool(body.get("active")))
     except OperatorError as e:
         return _json({"error": str(e)}, 404)
-    return _json(op.__dict__)
+    return _json(_operator(op))
+
+
+def _operator(op) -> dict:
+    return {**op.__dict__, "key": op.key, "linked": op.linked}
 
 
 def _int(value: str | None, default: int) -> int:
@@ -120,7 +125,7 @@ def create_app(data: AdminData, bot_token: str, admin_ids: frozenset[int]) -> we
     app.router.add_get("/api/overview", overview)
     app.router.add_get("/api/operators", operators)
     app.router.add_post("/api/operators", add_operator)
-    app.router.add_post("/api/operators/{user_id}/active", set_operator_active)
+    app.router.add_post("/api/operators/{key}/active", set_operator_active)
     app.router.add_get("/api/sessions", sessions)
     app.router.add_get("/api/sessions/{id}", session)
     app.router.add_get("/api/clients", clients)
