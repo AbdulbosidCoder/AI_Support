@@ -85,6 +85,7 @@ CLIENT_NOTE_HELP = "Нажмите «📝 Заметка о клиенте» п�
 OPERATOR_END_LABEL = "✅ Завершить разговор"
 NOTE_LABEL = "📝 Заметка о клиенте"
 TONE_BUTTONS = {"polite": "😊 Вежливо", "calm": "😐 Спокойно", "rude": "😠 Грубо"}
+PANEL_TEXT = "Панель поддержки. Ответы клиентам — реплаем на пост эскалации."
 REVIEW_HELP = "Добавьте ответ в базу знаний как есть, исправьте его (уберите детали конкретного клиента) или отклоните."
 # Prompts the bot posts in the support chat; the operator answers by replying to them.
 NOTE_PROMPT = "📝 Заметка о клиенте #{id}"
@@ -161,6 +162,23 @@ def tone_keyboard() -> InlineKeyboardMarkup:
     ])
 
 
+def panel_back_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Панель", callback_data="panel:home")]])
+
+
+def welcome_text(lang: Lang, saved: bool = False) -> str:
+    first = t("language_saved", lang) if saved else t("ask_problem", lang)
+    return f"{first}\n\n{t('welcome', lang)}\n\n{t('menu_hint', lang)}"
+
+
+def _bot_of(event):
+    """The Bot an aiogram event is bound to, if any (test stand-ins have none)."""
+    try:
+        return event.bot
+    except Exception:
+        return None
+
+
 def candidate_keyboard(candidate_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Добавить", callback_data=f"cand:approve:{candidate_id}"),
@@ -232,6 +250,9 @@ class TelegramSupportBot:
         # Operators added by an admin; while the list is empty anyone in the support chat answers.
         self.operators = operators or OperatorStore(":memory:")
         self._albums: MediaGroupCollector[tuple[Message, Bot]] | None = None
+        # Client chat -> (message id, is a menu) of the bot's latest message with inline buttons. Only that
+        # message keeps buttons: older ones lose them, and a menu is edited in place instead of re-sent.
+        self._buttons: dict[str, tuple[int, bool]] = {}
         # Instruction video id -> Telegram file_id of the copy uploaded by this bot.
         self._video_file_ids: dict[str, str] = {}
         self.router = Router()
@@ -312,11 +333,59 @@ class TelegramSupportBot:
             user = self.users.touch(CHANNEL, str(u.id), str(chat), u.username, u.full_name, u.language_code)
         return user
 
+    # --- one set of buttons at a time ---------------------------------------------------------------
+
+    async def _clear_buttons(self, chat_id: str, bot=None, keep: int | None = None) -> None:
+        """Remove the buttons from the bot's previous message in this chat (unless it is `keep`)."""
+        last = self._buttons.pop(chat_id, None)
+        if last is None or last[0] == keep or bot is None:
+            return
+        try:
+            await bot.edit_message_reply_markup(chat_id=int(chat_id), message_id=last[0], reply_markup=None)
+        except Exception:  # already edited, deleted or too old: nothing to clean
+            pass
+
+    def _remember(self, chat_id: str, sent, menu: bool) -> None:
+        message_id = getattr(sent, "message_id", None)
+        if isinstance(message_id, int):
+            self._buttons[chat_id] = (message_id, menu)
+
+    async def _reply_buttons(self, message: Message, text: str, markup, menu: bool = False, bot=None) -> None:
+        """Answer with inline buttons; the previous message's buttons disappear."""
+        chat_id = str(message.chat.id)
+        await self._clear_buttons(chat_id, bot or _bot_of(message))
+        self._remember(chat_id, await message.answer(text, reply_markup=markup), menu)
+
+    async def _push_buttons(self, bot: Bot, chat_id, text: str, markup, menu: bool = False,
+                            track: bool = True) -> None:
+        """Send to a client chat with inline buttons; the previous message's buttons disappear."""
+        await self._clear_buttons(str(chat_id), bot)
+        sent = await bot.send_message(int(chat_id), text, reply_markup=markup)
+        if track:
+            self._remember(str(chat_id), sent, menu)
+
+    async def _show(self, callback: CallbackQuery, text: str, markup) -> None:
+        """A menu screen: edit the menu the client tapped in place, like an app screen; otherwise send it."""
+        message = callback.message
+        chat_id = str(message.chat.id)
+        message_id = getattr(message, "message_id", None)
+        if message_id is not None and self._buttons.get(chat_id) == (message_id, True):
+            try:
+                await message.edit_text(text, reply_markup=markup)
+                return
+            except Exception:  # unchanged or too old to edit: send it anew
+                pass
+        try:  # the tapped message keeps no stale buttons
+            await message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        await self._reply_buttons(message, text, markup, menu=True, bot=_bot_of(callback))
+
     async def _next_step(self, message: Message, user: User) -> bool:
         """Ask for what registration still lacks; True if the client is fully registered."""
         if user.language is None:
             # First visit: greet in Uzbek, Russian and English and ask for the language.
-            await message.answer(CHOOSE_LANGUAGE, reply_markup=language_keyboard())
+            await self._reply_buttons(message, CHOOSE_LANGUAGE, language_keyboard(), menu=True)
             return False
         if not user.registered:
             await self._ask_phone(message, user.lang)
@@ -354,7 +423,7 @@ class TelegramSupportBot:
     async def on_change_language(self, callback: CallbackQuery) -> None:
         await callback.answer()
         if callback.message is not None:
-            await callback.message.answer(CHOOSE_LANGUAGE, reply_markup=language_keyboard())
+            await self._show(callback, CHOOSE_LANGUAGE, language_keyboard())
 
     async def on_change_phone(self, callback: CallbackQuery) -> None:
         await callback.answer()
@@ -373,19 +442,19 @@ class TelegramSupportBot:
         await callback.answer(t("language_saved", lang))
         if callback.message is None:
             return
+        if user.registered:
+            # The language chooser turns into the menu, in the new language.
+            await self._show(callback, welcome_text(lang, saved=True), main_keyboard(lang))
+            return
         try:
             await callback.message.edit_reply_markup(reply_markup=None)
         except Exception:  # message too old or already edited: the choice is saved anyway
             pass
-        if user.registered:
-            await self._send_welcome(callback.message, lang, saved=True)
-        else:
-            await self._ask_phone(callback.message, lang)
+        self._buttons.pop(str(callback.message.chat.id), None)
+        await self._ask_phone(callback.message, lang)
 
     async def _send_welcome(self, message: Message, lang: Lang, saved: bool = False) -> None:
-        first = t("language_saved", lang) if saved else t("ask_problem", lang)
-        await message.answer(f"{first}\n\n{t('welcome', lang)}\n\n{t('menu_hint', lang)}",
-                             reply_markup=main_keyboard(lang))
+        await self._reply_buttons(message, welcome_text(lang, saved), main_keyboard(lang), menu=True)
 
     # --- client buttons -----------------------------------------------------------------------------
 
@@ -400,12 +469,12 @@ class TelegramSupportBot:
     async def on_menu_button(self, callback: CallbackQuery) -> None:
         user = await self._registered_callback(callback)
         if user is not None:
-            await callback.message.answer(t("main_menu", user.lang), reply_markup=main_keyboard(user.lang))
+            await self._show(callback, t("main_menu", user.lang), main_keyboard(user.lang))
 
     async def on_settings_button(self, callback: CallbackQuery) -> None:
         user = await self._registered_callback(callback)
         if user is not None:
-            await callback.message.answer(t("settings", user.lang), reply_markup=settings_keyboard(user.lang))
+            await self._show(callback, t("settings", user.lang), settings_keyboard(user.lang))
 
     async def on_operator_button(self, callback: CallbackQuery, bot: Bot) -> None:
         user = await self._registered_callback(callback)
@@ -419,13 +488,29 @@ class TelegramSupportBot:
             return
         user = await self._registered_callback(callback)
         if user is not None:
-            await self._ask_quick(callback.message, bot, user, q, callback.from_user)
+            await self._ask_quick(callback.message, bot, user, q, callback.from_user, tapped=True)
 
-    async def _ask_quick(self, message: Message, bot: Bot, user: User, q, from_user=None) -> None:
-        """A quick question is answered as if the client typed it; the chat shows what was asked."""
+    async def _ask_quick(self, message: Message, bot: Bot, user: User, q, from_user=None, tapped: bool = False) -> None:
+        """A quick question is answered as if the client typed it; the chat shows what was asked.
+
+        Tapped in the menu, the menu itself turns into the question, so no extra message and no stale buttons.
+        """
         lang = user.lang
         question = q.question[lang]
-        await message.answer(f"{t('your_question', lang)} {question}")
+        asked = f"{t('your_question', lang)} {question}"
+        chat_id = str(message.chat.id)
+        message_id = getattr(message, "message_id", None)
+        edited = False
+        if tapped and message_id is not None and self._buttons.get(chat_id) == (message_id, True):
+            try:
+                await message.edit_text(asked, reply_markup=None)
+                self._buttons.pop(chat_id, None)
+                edited = True
+            except Exception:  # too old to edit: say it in a new message
+                pass
+        if not edited:
+            await self._clear_buttons(chat_id, bot)
+            await message.answer(asked)
         if await self._with_operator(message, bot, [], question):
             return
         await bot.send_chat_action(message.chat.id, ChatAction.TYPING)
@@ -438,7 +523,7 @@ class TelegramSupportBot:
         if conversation is not None and conversation.handoff_id is not None and self.settings.support_chat_id is not None:
             # Already with a person: no second escalation; answer in the conversation's language.
             lang = _lang(conversation.language)
-            await message.answer(t("with_operator", lang), reply_markup=end_keyboard(lang))
+            await self._reply_buttons(message, t("with_operator", lang), end_keyboard(lang), bot=bot)
             return
         self._log(chat_id, LOG_SYSTEM, "Клиент попросил оператора")
         await self._deliver(message, bot, self.engine.handoff(chat_id, user.lang), from_user)
@@ -468,7 +553,8 @@ class TelegramSupportBot:
         if action.kind == "operator":
             await self._to_operator(message, bot, user)
         elif action.kind == "settings":
-            await message.answer(t("settings", user.lang), reply_markup=settings_keyboard(user.lang))
+            await self._reply_buttons(message, t("settings", user.lang), settings_keyboard(user.lang), menu=True,
+                                      bot=bot)
         elif action.kind == "end":
             await self._client_ends(bot, message.chat.id, user.lang)
         else:
@@ -545,7 +631,10 @@ class TelegramSupportBot:
         markup = main_keyboard(reply.language) if reply.show_menu else (end_keyboard(reply.language) if opens else None)
         # A real answer is signed, so the client always sees who is talking: the assistant or a person.
         text = f"{t('assistant_name', reply.language)}:\n{reply.text}" if opens else reply.text
-        await message.answer(text, reply_markup=markup)
+        if markup is None:
+            await message.answer(text)
+        else:
+            await self._reply_buttons(message, text, markup, menu=reply.show_menu, bot=bot)
         await self._send_videos(message, reply)
         client_id = str(message.chat.id)
         handoff_id = await self._escalate(message, bot, reply, user) if reply.escalate else None
@@ -640,8 +729,8 @@ class TelegramSupportBot:
             await message.answer(NOT_OPERATOR)
             return
         lang = _lang(handoff.language)
-        await bot.send_message(int(handoff.client_chat_id), f"{t('operator_name', lang)}:\n{text}",
-                               reply_markup=end_keyboard(lang))
+        await self._push_buttons(bot, handoff.client_chat_id, f"{t('operator_name', lang)}:\n{text}",
+                                 end_keyboard(lang))
         operator_id, operator_name = (str(u.id), u.full_name) if u else (None, None)
         conversation = self.feedback.operator_replied(CHANNEL, handoff.client_chat_id, handoff.id, lang.value,
                                                       operator_id, operator_name)
@@ -654,16 +743,23 @@ class TelegramSupportBot:
                                  reply_markup=candidate_keyboard(candidate.id))
 
     async def on_panel(self, message: Message) -> None:
-        await message.answer("Панель поддержки. Ответы клиентам — реплаем на пост эскалации.",
-                             reply_markup=panel_keyboard())
+        await message.answer(PANEL_TEXT, reply_markup=panel_keyboard())
 
     async def on_panel_button(self, callback: CallbackQuery) -> None:
+        """Panel buttons edit the panel message in place, like the admin bot; candidates come as their own messages."""
         await callback.answer()
         what = (callback.data or "").split(":", 1)[1]
         if what == "candidates":
             await self._send_candidates(callback.message)
-        elif what == "rating":
-            await callback.message.answer(render_rating(self.feedback)[:4096])
+            return
+        if what == "rating":
+            text, markup = render_rating(self.feedback)[:4096], panel_back_keyboard()
+        else:
+            text, markup = PANEL_TEXT, panel_keyboard()
+        try:
+            await callback.message.edit_text(text, reply_markup=markup)
+        except Exception:  # unchanged or too old to edit: send it anew
+            await callback.message.answer(text, reply_markup=markup)
 
     async def on_note_button(self, callback: CallbackQuery) -> None:
         handoff = self.handoffs.find(str(callback.message.chat.id), str(callback.message.message_id))
@@ -754,7 +850,8 @@ class TelegramSupportBot:
         text = t("rate_operator" if request.target == OPERATOR else "rate_bot", lang)
         if by == OPERATOR:
             text = f"{t('ended_by_operator', lang)}\n{text}"
-        await bot.send_message(client_chat_id, text, reply_markup=rating_keyboard(request, lang))
+        # The rating buttons stay until the client rates; the answer's "end / menu" buttons go away.
+        await self._push_buttons(bot, client_chat_id, text, rating_keyboard(request, lang), track=False)
         if request.target == BOT:
             # A conversation the bot handled alone: the AI assesses the client, for the support team only.
             assessment = await self.engine.assess_client(str(client_chat_id))
@@ -765,7 +862,7 @@ class TelegramSupportBot:
 
     async def _client_ends(self, bot: Bot, chat_id: int, lang: Lang) -> None:
         if not await self._end(bot, chat_id, "client"):
-            await bot.send_message(chat_id, t("no_conversation", lang), reply_markup=main_keyboard(lang))
+            await self._push_buttons(bot, chat_id, t("no_conversation", lang), main_keyboard(lang), menu=True)
 
     async def on_end_button(self, callback: CallbackQuery, bot: Bot) -> None:
         await callback.answer()
@@ -812,7 +909,8 @@ class TelegramSupportBot:
         except Exception:  # message too old to edit: the rating is saved anyway
             pass
         if rated.target == BOT and rated.stars <= 2:
-            await callback.message.answer(t("rate_bot_low", lang), reply_markup=main_keyboard(lang))
+            await self._reply_buttons(callback.message, t("rate_bot_low", lang), main_keyboard(lang), menu=True,
+                                      bot=bot)
 
     async def on_client_tone(self, callback: CallbackQuery) -> None:
         """An operator rated how the client talked, with the buttons under the escalation post."""
