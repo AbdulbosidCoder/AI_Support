@@ -15,9 +15,6 @@
     --accent: var(--tg-theme-button-color, #2a7ae2);
     --accent-text: var(--tg-theme-button-text-color, #ffffff);
     --line: color-mix(in srgb, var(--hint) 25%, transparent);
-    --client: var(--bg);
-    --bot: color-mix(in srgb, var(--accent) 14%, var(--bg));
-    --op: color-mix(in srgb, #2e9d5a 18%, var(--bg));
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg2); color: var(--text);
@@ -50,14 +47,76 @@
   .btn.ghost { background: var(--bg2); color: var(--text); }
   form.add { display: grid; gap: 8px; background: var(--bg); padding: 12px; border-radius: 12px; margin-top: 10px; }
   h2 { font-size: 17px; margin: 16px 0 6px; }
-  .chat { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
-  .msg { max-width: 82%; padding: 8px 10px; border-radius: 14px; white-space: pre-wrap; word-wrap: break-word; }
-  .msg small { display: block; color: var(--hint); font-size: 11px; margin-top: 3px; }
-  .msg .who { font-size: 12px; font-weight: 600; margin-bottom: 2px; }
-  .msg.client { align-self: flex-start; background: var(--client); border-bottom-left-radius: 4px; }
-  .msg.bot { align-self: flex-end; background: var(--bot); border-bottom-right-radius: 4px; }
-  .msg.operator { align-self: flex-end; background: var(--op); border-bottom-right-radius: 4px; }
-  .msg.system, .msg.event { align-self: center; background: none; color: var(--hint); font-size: 12px; padding: 2px; }
+  /* The session chat looks like a Telegram chat: wallpaper, bubbles with tails, date and service pills. */
+  .tgchat { --wall: #b9d1a1; --wall2: #dfe8b8; --in: #ffffff; --out: #e1fec6; --meta: #8a9aa6; --meta-out: #5fa65a;
+            --name: #3a8fd8; --ink: #000000; --service: rgba(40, 60, 40, .42); --doodle: rgba(70, 110, 60, .10); }
+  :root[data-scheme="dark"] .tgchat { --wall: #0f1a24; --wall2: #17222d; --in: #182533; --out: #2b5278;
+            --meta: #6d8193; --meta-out: #7da8d3; --name: #71b8f5; --ink: #f5f7fa; --service: rgba(0, 0, 0, .38); --doodle: rgba(255, 255, 255, .03); }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-scheme="light"]) .tgchat { --wall: #0f1a24; --wall2: #17222d; --in: #182533; --out: #2b5278;
+            --meta: #6d8193; --meta-out: #7da8d3; --name: #71b8f5; --ink: #f5f7fa; --service: rgba(0, 0, 0, .38); --doodle: rgba(255, 255, 255, .03); }
+  }
+  body.in-chat header { display: none; }
+  body.in-chat main { max-width: none; padding: 0; }
+  .tgchat { min-height: 100vh; display: flex; flex-direction: column;
+            background: radial-gradient(circle at 20% 20%, var(--doodle) 0 2px, transparent 3px) 0 0 / 28px 28px,
+                        radial-gradient(circle at 70% 60%, var(--doodle) 0 1.5px, transparent 2.5px) 0 0 / 36px 36px,
+                        linear-gradient(160deg, var(--wall2), var(--wall)); }
+  .tgbar { position: sticky; top: 0; z-index: 3; display: flex; align-items: center; gap: 10px; padding: 8px 12px;
+           background: var(--bg); border-bottom: 1px solid var(--line); }
+  .tgbar .back { font-size: 26px; line-height: 1; padding: 0 6px 2px 0; }
+  .tgbar .who { flex: 1; min-width: 0; cursor: pointer; }
+  .tgbar .who b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tgbar .who span { display: block; color: var(--hint); font-size: 13px; overflow: hidden; text-overflow: ellipsis;
+                     white-space: nowrap; }
+  .tgbar .who span.live { color: var(--accent); }
+  .avatar { width: 40px; height: 40px; border-radius: 50%; flex: none; display: grid; place-items: center;
+            color: #fff; font-weight: 600; font-size: 16px; }
+  .tgmsgs { flex: 1; display: flex; flex-direction: column; gap: 2px; padding: 10px 8px 24px;
+            max-width: 760px; width: 100%; margin: 0 auto; }
+  .day, .service { align-self: center; margin: 8px 0; padding: 3px 10px; border-radius: 12px; color: #fff;
+                   background: var(--service); font-size: 13px; font-weight: 500; text-align: center; max-width: 85%; }
+  .service { font-weight: 400; }
+  .bubble { position: relative; max-width: min(78%, 420px); padding: 6px 9px 6px 10px; border-radius: 15px;
+            background: var(--in); color: var(--ink); box-shadow: 0 1px 1px rgba(0, 0, 0, .13);
+            white-space: pre-wrap; overflow-wrap: anywhere; align-self: flex-start; }
+  .bubble.out { align-self: flex-end; background: var(--out); }
+  .bubble.last { margin-bottom: 6px; }
+  .bubble.last.in { border-bottom-left-radius: 4px; }
+  .bubble.last.out { border-bottom-right-radius: 4px; }
+  .bubble.last.in::before, .bubble.last.out::before { content: ""; position: absolute; bottom: 0; width: 10px; height: 14px;
+            background: inherit; }
+  .bubble.last.in::before { left: -7px; clip-path: path("M10 0 L10 14 L0 14 C5 12 9 8 10 0 Z"); }
+  .bubble.last.out::before { right: -7px; clip-path: path("M0 0 L0 14 L10 14 C5 12 1 8 0 0 Z"); }
+  .bubble .name { font-size: 13px; font-weight: 600; color: var(--name); margin-bottom: 1px; }
+  .bubble .time { float: right; margin: 6px 0 -4px 10px; font-size: 11.5px; color: var(--meta); white-space: nowrap; }
+  .bubble.out .time { color: var(--meta-out); }
+  .bubble .kind { font-style: italic; color: var(--meta); }
+  .bubble.media { padding: 3px; }
+  .bubble.media .name { padding: 3px 7px 2px; }
+  .bubble.media .caption { padding: 4px 7px 3px; }
+  .bubble.media .time.over { position: absolute; right: 9px; bottom: 9px; margin: 0; padding: 1px 6px;
+            border-radius: 9px; background: rgba(0, 0, 0, .45); color: #fff; }
+  .photos { display: grid; gap: 2px; border-radius: 12px; overflow: hidden; }
+  .photos.n2, .photos.n4 { grid-template-columns: 1fr 1fr; }
+  .photos.n3 { grid-template-columns: 1fr 1fr; } .photos.n3 > :first-child { grid-column: span 2; }
+  .ph { position: relative; min-width: 180px; min-height: 120px; background: color-mix(in srgb, var(--meta) 22%, transparent);
+        display: grid; place-items: center; color: var(--meta); font-size: 13px; }
+  .photos:not(.n1) { width: min(300px, 68vw); }
+  .photos:not(.n1) .ph { min-width: 0; }
+  .photos:not(.n1) .ph img { height: 190px; }
+  .ph img { display: block; width: 100%; max-height: 360px; object-fit: cover; cursor: zoom-in; }
+  .ph.loading::after { content: ""; width: 26px; height: 26px; border-radius: 50%; border: 3px solid var(--meta);
+        border-top-color: transparent; animation: spin 0.9s linear infinite; }
+  .ph audio { width: 240px; max-width: 100%; }
+  .ph.file { min-height: 0; min-width: 0; padding: 8px; }
+  .ph.file a { color: var(--name); }
+  .bubble.audio .ph { background: none; min-height: 0; padding: 4px 4px 0; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .ph.loading::after { animation: none; } }
+  .viewer { position: fixed; inset: 0; z-index: 10; background: rgba(0, 0, 0, .92); display: grid; place-items: center;
+            cursor: zoom-out; }
+  .viewer img { max-width: 100vw; max-height: 100vh; object-fit: contain; }
   .back { color: var(--link); background: none; border: 0; font: inherit; padding: 4px 0; cursor: pointer; }
   .head { background: var(--bg); border-radius: 12px; padding: 12px; margin-top: 6px; }
   .empty { text-align: center; color: var(--hint); padding: 30px 10px; }
@@ -73,7 +132,8 @@
 <main id="view"><div class="empty">Загрузка…</div></main>
 <script>
 const tg = window.Telegram && window.Telegram.WebApp;
-if (tg) { tg.ready(); tg.expand(); }
+if (tg) { tg.ready(); tg.expand(); document.documentElement.dataset.scheme = tg.colorScheme;
+  tg.onEvent && tg.onEvent("themeChanged", () => { document.documentElement.dataset.scheme = tg.colorScheme; }); }
 const initData = tg ? tg.initData : "";
 const view = document.getElementById("view");
 let timer = null;
@@ -101,6 +161,7 @@ function fail(e) {
 
 function route() {
   clearInterval(timer);
+  document.body.classList.remove("in-chat");
   const [name, arg] = (location.hash.slice(1) || "overview").split("=");
   const tab = {session: "sessions", client: "clients"}[name] || name;
   document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("on", b.dataset.tab === tab));
@@ -167,26 +228,90 @@ async function sessions() {
   timer = setInterval(() => load().catch(fail), 15000);
 }
 
+const AVATAR = ["#e17076", "#7bc862", "#e5ca77", "#65aadd", "#a695e7", "#ee7aae", "#6ec9cb", "#faa774"];
+const initials = name => String(name || "?").trim().split(/\s+/).slice(0, 2).map(w => w[0]).join("").toUpperCase();
+const day = iso => { const d = new Date(iso); return isNaN(d) ? "" :
+  d.toLocaleDateString("ru-RU", {day: "numeric", month: "long", year: d.getFullYear() === new Date().getFullYear() ? undefined : "numeric"}); };
+const clock = iso => { const d = new Date(iso); return isNaN(d) ? "" : d.toLocaleTimeString("ru-RU", {hour: "2-digit", minute: "2-digit"}); };
+const media = new Map();  // /api/media/... -> Promise of a blob URL, so a refresh does not download again
+
+function loadMedia(url) {
+  if (!media.has(url)) media.set(url, fetch(url, {headers: {"X-Telegram-Init-Data": initData}})
+    .then(r => r.ok ? r.blob() : Promise.reject(r.status)).then(b => ({url: URL.createObjectURL(b), type: b.type})));
+  return media.get(url);
+}
+
+function fillMedia(root) {
+  root.querySelectorAll(".ph[data-src]").forEach(el => {
+    const src = el.dataset.src; el.removeAttribute("data-src");
+    loadMedia(src).then(({url, type}) => {
+      el.classList.remove("loading");
+      if (type.startsWith("image/")) {
+        const img = new Image(); img.src = url; img.alt = "Фото клиента";
+        img.onclick = () => { const v = document.createElement("div"); v.className = "viewer";
+          v.innerHTML = `<img src="${url}" alt="">`; v.onclick = () => v.remove(); document.body.append(v); };
+        el.append(img);
+      } else if (type.startsWith("audio/") || type.startsWith("video/ogg")) {
+        el.innerHTML = `<audio controls preload="metadata" src="${url}"></audio>`;
+      } else {
+        el.classList.add("file"); el.innerHTML = `<a href="${url}" target="_blank" rel="noopener">📎 Открыть файл</a>`;
+      }
+    }, () => { el.classList.remove("loading"); el.textContent = el.dataset.fail || "Файл недоступен"; });
+  });
+}
+
+function bubble(m, prev, next) {
+  if (m.sender === "system" || m.sender === "event") return `<div class="service">${esc(m.text)}</div>`;
+  const out = m.sender !== "client";
+  const author = m.sender === "operator" ? "👨‍💼 " + (m.operator_name || "Оператор") : m.sender === "bot" ? "🤖 Бот" : "";
+  const same = (a, b) => a && b && a.sender === b.sender && a.operator_name === b.operator_name
+    && day(a.created_at) === day(b.created_at);
+  const first = !same(prev, m), last = !same(m, next);
+  const time = `<span class="time">${clock(m.created_at)}</span>`;
+  const name = out && first ? `<div class="name">${esc(author)}</div>` : "";
+  const cls = `bubble ${out ? "out" : "in"}${last ? " last" : ""}`;
+  const placeholder = /^\[.*\]$/.test(m.text || "");  // "[фото]" saved instead of a caption
+  const caption = placeholder ? "" : esc(m.text);
+  if (m.files && m.id) {
+    const audio = m.kind === "voice" || m.kind === "audio";
+    const fail = audio ? "🎤 Голосовое недоступно" : "📷 Фото недоступно";
+    const items = Array.from({length: m.files}, (_, i) =>
+      `<div class="ph loading" data-src="/api/media/${m.id}/${i}" data-fail="${fail}"></div>`).join("");
+    return `<div class="${cls} media${audio ? " audio" : ""}">${name}<div class="photos n${Math.min(m.files, 4)}">${items}</div>${
+      caption ? `<div class="caption">${caption}${time}</div>` : time.replace('class="time"', 'class="time over"')}</div>`;
+  }
+  const kind = m.kind !== "text" ? `<span class="kind">${KIND[m.kind] || m.kind}</span>${caption ? "\n" : ""}` : "";
+  return `<div class="${cls}">${name}${kind}${caption}${time}</div>`;
+}
+
 async function session(id) {
+  document.body.classList.add("in-chat");
+  let shown = "";
   const render = async () => {
     const s = await api(`/api/sessions/${encodeURIComponent(id)}`);
-    const msgs = s.messages.map(m => (m.sender === "system" || m.sender === "event")
-      ? `<div class="msg system">${esc(m.text)} · ${when(m.created_at)}</div>`
-      : `<div class="msg ${esc(m.sender)}"><div class="who">${esc(m.sender === "operator" && m.operator_name
-          ? "👨‍💼 " + m.operator_name : WHO[m.sender] || m.sender)}</div>${m.kind !== "text"
-          ? `<i>${KIND[m.kind] || m.kind}</i>${m.text ? "\n" : ""}` : ""}${esc(m.text)}<small>${when(m.created_at)}</small></div>`);
-    const stillAtBottom = innerHeight + scrollY >= document.body.scrollHeight - 40;
-    view.innerHTML = `<button class="back" onclick="history.back()">‹ Назад</button>
-      <div class="head"><b>${esc(s.client_name)}</b> ${s.client_username ? "@" + esc(s.client_username) : ""}
-        ${s.client_phone ? " · " + esc(s.client_phone) : ""}
-        <div class="muted">Сессия #${s.id} · ${s.status === "open" ? "открыта" : "завершена"} ·
-          ${esc(LANG[s.language] || s.language)} · ${esc(s.topic || "—")} ·
-          ${esc(s.operator_name || (s.escalated ? "ждёт оператора" : "бот"))}
-          ${s.rating ? ` · оценка ${s.rating.stars}★` : ""}</div>
-        <div class="filters"><button class="btn ghost" onclick="location.hash='client=${esc(s.client_id)}'">Все сессии клиента</button></div>
-      </div>
-      <div class="chat">${msgs.join("") || '<div class="empty">Сообщений нет</div>'}</div>`;
-    if (stillAtBottom) scrollTo(0, document.body.scrollHeight);
+    const sig = s.status + s.messages.length + ":" + (s.messages.at(-1) || {}).id;
+    if (sig === shown) return s;  // nothing new: keep loaded photos and the scroll position
+    const firstRender = !shown;
+    shown = sig;
+    const rows = [];
+    s.messages.forEach((m, i) => {
+      if (day(m.created_at) !== day((s.messages[i - 1] || {}).created_at)) rows.push(`<div class="day">${day(m.created_at)}</div>`);
+      rows.push(bubble(m, s.messages[i - 1], s.messages[i + 1]));
+    });
+    const who = s.operator_name || (s.escalated ? "ждёт оператора" : "бот");
+    const live = s.status === "open";
+    const stillAtBottom = innerHeight + scrollY >= document.body.scrollHeight - 80;
+    view.innerHTML = `<div class="tgchat">
+      <div class="tgbar"><button class="back" onclick="history.back()" aria-label="Назад">‹</button>
+        <div class="avatar" style="background:${AVATAR[Math.abs(parseInt(s.client_id, 10) || 0) % AVATAR.length]}">${esc(initials(s.client_name))}</div>
+        <div class="who" onclick="location.hash='client=${esc(s.client_id)}'" title="Все сессии клиента">
+          <b>${esc(s.client_name)}</b>
+          <span class="${live ? "live" : ""}">${live ? "открыта" : "завершена"} · ${esc(who)} · ${esc(s.topic || "без темы")} · ${esc(LANG[s.language] || s.language || "")}${s.rating ? ` · ${s.rating.stars}★` : ""}</span>
+          <span>${[s.client_username ? "@" + s.client_username : "", s.client_phone || "", "сессия #" + s.id].filter(Boolean).map(esc).join(" · ")}</span>
+        </div></div>
+      <div class="tgmsgs">${rows.join("") || '<div class="service">Сообщений нет</div>'}</div></div>`;
+    fillMedia(view);
+    if (firstRender || stillAtBottom) scrollTo(0, document.body.scrollHeight);
     return s;
   };
   const s = await render();

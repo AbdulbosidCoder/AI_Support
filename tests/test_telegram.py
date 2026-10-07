@@ -1224,3 +1224,11 @@ def test_new_quick_questions_forbidden_answers_replaced(qid, bad):
     chat = Chat()
     asyncio.run(bot.on_quick_question(callback(chat, f"q:{qid}"), chat))
     assert chat.sent[-1][0] == said(t("guardrail", Lang.UZ_LATN))
+
+
+def test_media_file_ids_for_the_admin_panel():
+    from ai_support.channels.telegram_bot import media_files
+    album = [NS(photo=[NS(file_id="small"), NS(file_id="big")], voice=None, audio=None, document=None),
+             NS(photo=None, voice=NS(file_id="voice"), audio=None, document=None),
+             NS(photo=None, voice=None, audio=None, document=None)]
+    assert media_files(album) == ["big", "voice"]  # the largest photo size; text has no file

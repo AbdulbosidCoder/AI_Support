@@ -5,12 +5,15 @@ system events such as a hand-off or the end of a conversation. A session is a co
 ai_support/feedback.py: its messages are those saved with its conversation_id, or else the client's
 messages after the previous conversation ended, up to the moment this one ended (or now, if open).
 Card numbers, PINFL, phones and balances are masked before saving, like everywhere else.
+Photos, voice messages and files are not copied: only their Telegram file ids are kept, and the
+admin panel fetches the file from Telegram when an admin opens the chat.
 """
 from __future__ import annotations
 
+import json
 import sqlite3
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -28,6 +31,7 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     operator_name TEXT,
     kind          TEXT NOT NULL DEFAULT 'text',   -- 'text' | 'photo' | 'voice' | 'audio' | 'document'
     text          TEXT NOT NULL DEFAULT '',
+    files         TEXT,                   -- JSON list of Telegram file ids (photos, voice, files)
     created_at    TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS chat_messages_client ON chat_messages (channel, client_id, created_at);
@@ -45,6 +49,7 @@ class ChatMessage:
     text: str
     operator_name: str | None
     created_at: str
+    files: list[str] = field(default_factory=list)
 
 
 def _now() -> str:
@@ -63,17 +68,19 @@ class ChatLog:
             cols = {r["name"] for r in self._db.execute("PRAGMA table_info(chat_messages)")}
             if "conversation_id" not in cols:
                 self._db.execute("ALTER TABLE chat_messages ADD COLUMN conversation_id INTEGER")
+            if "files" not in cols:
+                self._db.execute("ALTER TABLE chat_messages ADD COLUMN files TEXT")
 
     def add(self, channel: str, client_id: str, sender: str, text: str = "", kind: str = "text",
             operator_id: str | None = None, operator_name: str | None = None, handoff_id: int | None = None,
-            conversation_id: int | None = None) -> int:
+            conversation_id: int | None = None, files: list[str] | tuple[str, ...] = ()) -> int:
         with self._lock, self._db:
             cur = self._db.execute(
                 """INSERT INTO chat_messages (channel, client_id, conversation_id, handoff_id, sender, operator_id,
-                                             operator_name, kind, text, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                             operator_name, kind, text, files, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (channel, client_id, conversation_id, handoff_id, sender, operator_id, operator_name, kind,
-                 mask_pii((text or "").strip()), _now()),
+                 mask_pii((text or "").strip()), json.dumps(list(files)) if files else None, _now()),
             )
         return cur.lastrowid
 
@@ -91,6 +98,12 @@ class ChatLog:
                 "SELECT * FROM chat_messages WHERE channel = ? AND client_id = ? ORDER BY id DESC LIMIT ?",
                 (channel, client_id, limit)).fetchall()
         return [_message(r) for r in reversed(rows)]
+
+    def files(self, message_id: int) -> list[str]:
+        """The Telegram file ids saved with one message."""
+        with self._lock:
+            row = self._db.execute("SELECT files FROM chat_messages WHERE id = ?", (message_id,)).fetchone()
+        return _files(row["files"]) if row else []
 
     def messages(self, channel: str, client_id: str, after: str | None = None, until: str | None = None,
                  limit: int = 500) -> list[ChatMessage]:
@@ -113,4 +126,12 @@ class ChatLog:
 
 
 def _message(r: sqlite3.Row) -> ChatMessage:
-    return ChatMessage(r["id"], r["sender"], r["kind"], r["text"], r["operator_name"], r["created_at"])
+    return ChatMessage(r["id"], r["sender"], r["kind"], r["text"], r["operator_name"], r["created_at"],
+                       _files(r["files"]))
+
+
+def _files(value: str | None) -> list[str]:
+    try:
+        return [str(f) for f in json.loads(value)] if value else []
+    except ValueError:
+        return []
