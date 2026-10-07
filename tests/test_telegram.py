@@ -83,7 +83,7 @@ def test_reply_to_other_chat_image_ignored():
 
 from aiogram.types import InlineKeyboardMarkup, ReplyKeyboardMarkup
 
-from ai_support.menu import CHOOSE_LANGUAGE, OPERATOR_LABEL, QUICK_QUESTIONS, SETTINGS_LABEL
+from ai_support.menu import CHOOSE_LANGUAGE, END_LABEL, OPERATOR_LABEL, QUICK_QUESTIONS, SETTINGS_LABEL
 from ai_support.models import BotReply, Lang
 from ai_support.templates import t
 from ai_support.users import UserStore
@@ -144,9 +144,9 @@ def test_choosing_language_saves_it_and_shows_menu():
     assert users.get("telegram", "42").language == Lang.RU
     (saved, kb), (text, mini) = chat.sent[-2:]
     assert saved == t("language_saved", Lang.RU) and isinstance(kb, ReplyKeyboardMarkup)
-    assert kb.keyboard[-1][1].text == SETTINGS_LABEL[Lang.RU]
+    assert kb.keyboard[-2][1].text == SETTINGS_LABEL[Lang.RU] and kb.keyboard[-1][0].text == END_LABEL[Lang.RU]
     assert t("welcome", Lang.RU) in text
-    assert [row[0].callback_data for row in mini.inline_keyboard] == [f"q:{q.id}" for q in QUICK_QUESTIONS]
+    assert [row[0].callback_data for row in mini.inline_keyboard] == [f"q:{q.id}" for q in QUICK_QUESTIONS] + ["end"]
 
 
 def test_second_start_does_not_ask_language_again():
@@ -187,7 +187,8 @@ def test_quick_question_asked_in_chosen_language():
     q = QUICK_QUESTIONS[0]
     asyncio.run(bot.on_client_message(client_msg(chat, q.label[Lang.RU]), chat))  # old keyboard label
     assert llm.calls[0][1] == q.question[Lang.UZ_CYRL]
-    assert chat.sent[-2][0] == "Javob" and chat.sent[-1][0] == t("rate_bot", Lang.UZ_CYRL)
+    text, kb = chat.sent[-1]
+    assert text == "Javob" and kb.inline_keyboard[0][0].text == END_LABEL[Lang.UZ_CYRL]
 
 
 def test_quick_question_forbidden_answer_replaced():
@@ -233,8 +234,8 @@ def test_mini_menu_button_asks_question_in_chosen_language():
     users.set_language("telegram", "42", Lang.RU)
     asyncio.run(bot.on_quick_question(callback(chat, "q:add_card"), chat))
     assert llm.calls[0][1] == QUICK_QUESTIONS[0].question[Lang.RU]
-    assert chat.sent[-2] == ("Kartalarim bo'limiga kiring.", None)
-    assert chat.sent[-1][0] == t("rate_bot", Lang.UZ_LATN)
+    text, kb = chat.sent[-1]
+    assert text == "Kartalarim bo'limiga kiring." and kb.inline_keyboard[0][0].callback_data == "end"
 
 
 def test_mini_menu_forbidden_answer_replaced():
@@ -359,8 +360,7 @@ def test_operator_reply_relayed_saved_and_offered_as_candidate():
     post = tg._next
     support = Chat()
     asyncio.run(bot.on_operator_reply(operator_msg(support, "Обновление долга занимает время, проверьте завтра.", post), tg))
-    assert tg.sent[-2] == (42, "Обновление долга занимает время, проверьте завтра.")
-    assert tg.sent[-1] == (42, t("rate_operator", Lang.RU))
+    assert tg.sent[-1] == (42, "Обновление долга занимает время, проверьте завтра.")
     c = handoffs.candidates()[0]
     assert c.question == "Квартплата не обновилась после оплаты" and c.language == "ru"
     assert f"#{c.id}" in support.sent[-1][0] and "/approve" in support.sent[-1][0]
@@ -375,7 +375,7 @@ def test_escalation_link_survives_bot_restart(tmp_path):
                                    UserStore(":memory:"), HandoffStore(db))
     assert restarted.is_handoff_reply(operator_msg(Chat(), "Javob", post))
     asyncio.run(restarted.on_operator_reply(operator_msg(Chat(), "Javob", post), tg))
-    assert tg.sent[-2] == (42, "Javob")
+    assert tg.sent[-1] == (42, "Javob")
 
 
 def test_approve_updates_bot_knowledge():
@@ -480,60 +480,89 @@ def rating_bot(llm):
     return bot, feedback
 
 
-def rate_data(kb):
-    return kb.inline_keyboard[0][3].callback_data  # the 4⭐ button
+def rate_data(kb, stars=4):
+    return kb.inline_keyboard[0][stars - 1].callback_data
 
 
-def test_bot_answer_asks_rating_and_only_latest_keeps_buttons():
-    llm = FakeLLM(answer("Kartalarim bo'limiga kiring.", "uz_latn", topic="add_card"))
+def end_callback(chat, uid=42):
+    async def noop(*_, **__):
+        pass
+    return NS(data="end", from_user=NS(id=uid, username="ali", full_name="Ali", language_code="ru"),
+              message=NS(chat=NS(id=uid), answer=chat.answer), answer=noop)
+
+
+def answered(llm=None):
+    """A client asked a question and the bot answered it."""
+    llm = llm or FakeLLM(answer("Kartalarim bo'limiga kiring.", "uz_latn", topic="add_card"))
     bot, feedback = rating_bot(llm)
     chat, tg = ClientChat(), RatingTG()
     asyncio.run(bot.on_client_message(client_msg(chat, "Karta qo'shilmayapti"), tg))
+    return bot, feedback, llm, chat, tg
+
+
+def test_answer_offers_end_button_and_asks_no_rating_yet():
+    bot, feedback, llm, chat, tg = answered()
     text, kb = chat.sent[-1]
-    assert text == t("rate_bot", Lang.UZ_LATN)
+    assert text == "Kartalarim bo'limiga kiring." and kb.inline_keyboard == [[kb.inline_keyboard[0][0]]]
+    assert kb.inline_keyboard[0][0].text == END_LABEL[Lang.UZ_LATN]
+    assert tg.sent == [] and feedback.score().count == 0  # no rating request after an answer
+
+
+def test_client_ends_conversation_rates_bot_and_ai_assesses():
+    bot, feedback, llm, chat, tg = answered()
+    asyncio.run(bot.on_end_button(end_callback(chat), tg))
+    client, text, kb = tg.sent[-1]
+    assert client == 42 and text == t("rate_bot", Lang.UZ_LATN)
     labels = [b.text for row in kb.inline_keyboard for b in row]
     assert labels[:5] == ["1⭐", "2⭐", "3⭐", "4⭐", "5⭐"] and t("rate_not_helped", Lang.UZ_LATN) in labels
     assert t("rate_no_answer", Lang.UZ_LATN) not in labels  # the bot always answers
-    asyncio.run(bot.on_client_message(client_msg(chat, "Yana savol"), tg))
-    assert tg.deleted == [(42, 2)]  # the first prompt is removed
-
-
-def test_client_rates_bot_and_ai_assesses_client_once():
-    llm = FakeLLM(answer("Kartalarim bo'limiga kiring.", "uz_latn", topic="add_card"))
-    bot, feedback = rating_bot(llm)
-    chat, tg = ClientChat(), RatingTG()
-    asyncio.run(bot.on_client_message(client_msg(chat, "Karta qo'shilmayapti"), tg))
-    data = rate_data(chat.sent[-1][1])
-    cb, edits = rate_callback(chat, data)
+    assert len(llm.assessed) == 1 and bot.engine.recent_turns("42") == []  # next question starts fresh
+    cb, edits = rate_callback(chat, rate_data(kb))
     asyncio.run(bot.on_rate(cb, tg))
-    assert edits == [f"{t('rate_thanks', Lang.UZ_LATN)} 4⭐"]
-    assert feedback.score("bot").count == 1 and len(llm.assessed) == 1
-    asyncio.run(bot.on_rate(rate_callback(chat, data.replace(":4", ":5"))[0], tg))  # changed the rating
-    assert feedback.score("bot").average == 5.0 and len(llm.assessed) == 1
+    assert edits == [f"{t('rate_thanks', Lang.UZ_LATN)} 4⭐"] and feedback.score("bot").count == 1
+    asyncio.run(bot.on_rate(rate_callback(chat, rate_data(kb, 5))[0], tg))  # changed the rating
+    assert feedback.score("bot").average == 5.0 and feedback.score().count == 1
 
 
-def test_low_bot_rating_points_to_operator_without_promises():
-    llm = FakeLLM(answer("Kartalarim bo'limiga kiring.", "ru", topic="add_card"))
-    bot, _ = rating_bot(llm)
+def test_end_from_main_menu_and_command():
+    for how in ("menu", "command"):
+        bot, feedback, llm, chat, tg = answered()
+        if how == "menu":
+            asyncio.run(bot.on_client_message(client_msg(chat, END_LABEL[Lang.UZ_LATN]), tg))
+        else:
+            asyncio.run(bot.on_end_command(client_msg(chat, "/end"), tg))
+        assert tg.sent[-1][1] == t("rate_bot", Lang.UZ_LATN)
+
+
+def test_end_without_conversation_says_so_and_shows_menu():
+    bot, feedback = rating_bot(FakeLLM())
     chat, tg = ClientChat(), RatingTG()
-    asyncio.run(bot.on_client_message(client_msg(chat, "Не добавляется карта"), tg))
-    request_id = chat.sent[-1][1].inline_keyboard[0][0].callback_data.split(":")[1]
-    asyncio.run(bot.on_rate(rate_callback(chat, f"rate:{request_id}:nohelp")[0], tg))
-    assert chat.sent[-1][0] == t("rate_bot_low", Lang.RU)
-    assert all(not guardrails.find_violations(text) for text, _ in chat.sent)
-    assert not any(any(w in text for w in LEAKS) for text, _ in chat.sent)
-
-
-def test_other_client_cannot_rate():
-    llm = FakeLLM(answer("Ok", "ru", topic="add_card"))
-    bot, feedback = rating_bot(llm)
-    chat, tg = ClientChat(), RatingTG()
-    asyncio.run(bot.on_client_message(client_msg(chat, "Карта"), tg))
-    asyncio.run(bot.on_rate(rate_callback(chat, rate_data(chat.sent[-1][1]), uid=43)[0], tg))
+    asyncio.run(bot.on_client_message(client_msg(chat, "Salom"), tg))  # a greeting opens nothing
+    asyncio.run(bot.on_end_button(end_callback(chat), tg))
+    client, text, kb = tg.sent[-1]
+    assert text == t("no_conversation", Lang.UZ_LATN) and kb.inline_keyboard[0][0].callback_data.startswith("q:")
     assert feedback.score().count == 0
 
 
-def test_escalation_carries_ai_assessment_level_and_tone_buttons_for_support_only():
+def test_low_bot_rating_points_to_operator_without_promises():
+    bot, feedback, llm, chat, tg = answered(FakeLLM(answer("Kartalarim bo'limiga kiring.", "ru", topic="add_card")))
+    asyncio.run(bot.on_end_button(end_callback(chat), tg))
+    request_id = tg.sent[-1][2].inline_keyboard[0][0].callback_data.split(":")[1]
+    asyncio.run(bot.on_rate(rate_callback(chat, f"rate:{request_id}:nohelp")[0], tg))
+    assert chat.sent[-1][0] == t("rate_bot_low", Lang.RU)
+    client_texts = [text for text, _ in chat.sent] + [text for c, text, _ in tg.sent if c == 42]
+    assert all(not guardrails.find_violations(text) for text in client_texts)
+    assert not any(any(w in text for w in LEAKS) for text in client_texts)
+
+
+def test_other_client_cannot_rate():
+    bot, feedback, llm, chat, tg = answered()
+    asyncio.run(bot.on_end_button(end_callback(chat), tg))
+    asyncio.run(bot.on_rate(rate_callback(chat, rate_data(tg.sent[-1][2]), uid=43)[0], tg))
+    assert feedback.score().count == 0
+
+
+def test_escalation_carries_ai_assessment_level_and_buttons_for_support_only():
     llm = FakeLLM(answer("Передаю специалисту.", "ru", escalate=True, reason="no answer"),
                   assessment=Assessment("rude", "Долг не обновился", "Показывать квитанцию"))
     bot, feedback = rating_bot(llm)
@@ -544,8 +573,10 @@ def test_escalation_carries_ai_assessment_level_and_tone_buttons_for_support_onl
     assert "тон: грубо" in summary and "Суть проблемы: Долг не обновился" in summary
     assert "Предложения: Показывать квитанцию" in summary and "Уровень клиента: C" in summary
     assert [b.callback_data for b in kb.inline_keyboard[0]] == ["ctone:polite", "ctone:calm", "ctone:rude"]
-    # The client sees only the hand-off, no rating of the bot and nothing about the assessment.
+    assert kb.inline_keyboard[1][0].callback_data == "hend"
+    # The client sees only the hand-off (with the end button), nothing about the assessment.
     assert [text for text, _ in chat.sent] == ["Передаю специалисту.\n\n" + t("handoff", Lang.RU)]
+    assert chat.sent[-1][1].inline_keyboard[0][0].callback_data == "end"
 
 
 def escalated_with_feedback(llm=None):
@@ -556,32 +587,54 @@ def escalated_with_feedback(llm=None):
     return bot, feedback, chat, tg, tg._next
 
 
-def test_escalation_expires_open_bot_rating():
-    llm = FakeLLM(answer("Kartalarim bo'limiga kiring.", "ru", topic="add_card"))
-    bot, feedback = rating_bot(llm)
-    chat, tg = ClientChat(), RatingTG()
-    asyncio.run(bot.on_client_message(client_msg(chat, "Карта"), tg))
-    data = rate_data(chat.sent[-1][1])
-    asyncio.run(bot.on_client_message(client_msg(chat, OPERATOR_LABEL[Lang.RU]), tg))
-    assert tg.deleted == [(42, 2)]
-    asyncio.run(bot.on_rate(rate_callback(chat, data)[0], tg))
-    assert feedback.score().count == 0
-
-
-def test_operator_reply_asks_client_to_rate_operator():
+def test_operator_reply_relayed_with_end_button_and_no_rating():
     bot, feedback, chat, tg, post = escalated_with_feedback()
     asyncio.run(bot.on_operator_reply(operator_msg(Chat(), "Проверьте раздел «Tarix».", post), tg))
     client, text, kb = tg.sent[-1]
-    assert client == 42 and text == t("rate_operator", Lang.RU)
+    assert (client, text) == (42, "Проверьте раздел «Tarix».") and kb.inline_keyboard[0][0].callback_data == "end"
+    assert feedback.score().count == 0
+
+
+def test_client_ends_after_operator_and_rates_operator():
+    bot, feedback, chat, tg, post = escalated_with_feedback()
+    asyncio.run(bot.on_operator_reply(operator_msg(Chat(), "Проверьте раздел «Tarix».", post), tg))
+    asyncio.run(bot.on_end_button(end_callback(chat), tg))
+    client, text, kb = tg.sent[-1]
+    assert text == t("rate_operator", Lang.RU)
     labels = [b.text for row in kb.inline_keyboard for b in row]
     assert t("rate_no_answer", Lang.RU) in labels and t("rate_not_helped", Lang.RU) in labels
-    first_prompt = tg._next
-    asyncio.run(bot.on_operator_reply(operator_msg(Chat(), "Ещё уточнение.", post), tg))
-    assert tg.deleted == [(42, first_prompt)]
-    data = tg.sent[-1][2].inline_keyboard[1][0].callback_data  # "no answer"
+    asyncio.run(bot.on_rate(rate_callback(chat, rate_data(kb))[0], tg))
+    assert feedback.operator_scores() == [("Operator", 4.0, 1)]
+
+
+def test_client_ends_before_operator_answered_can_say_no_answer():
+    bot, feedback, chat, tg, post = escalated_with_feedback()
+    asyncio.run(bot.on_end_command(client_msg(chat, "/end"), tg))
+    kb = tg.sent[-1][2]
+    data = kb.inline_keyboard[1][0].callback_data  # "no answer"
     asyncio.run(bot.on_rate(rate_callback(chat, data)[0], tg))
     score = feedback.score("operator")
-    assert score.count == 1 and score.no_answer == 1 and feedback.operator_scores() == [("Operator", 1.0, 1)]
+    assert score.count == 1 and score.no_answer == 1
+
+
+def test_operator_ends_with_button_or_command():
+    for how in ("button", "command"):
+        bot, feedback, chat, tg, post = escalated_with_feedback()
+        asyncio.run(bot.on_operator_reply(operator_msg(Chat(), "Ответ", post), tg))
+        support = Chat()
+        if how == "button":
+            cb, answers = tone_callback(post, "x")
+            cb.data = "hend"
+            asyncio.run(bot.on_operator_end_button(cb, tg))
+            reply = answers[-1]
+        else:
+            asyncio.run(bot.on_operator_end(operator_msg(support, "/end", post), tg))
+            reply = support.sent[-1][0]
+        assert reply == "Разговор завершён, клиента попросили его оценить."
+        client, text, _ = tg.sent[-1]
+        assert client == 42 and text == f"{t('ended_by_operator', Lang.RU)}\n{t('rate_operator', Lang.RU)}"
+        asyncio.run(bot.on_operator_end(operator_msg(support, "/end", post), tg))
+        assert support.sent[-1][0] == "Разговор уже завершён."
 
 
 def tone_callback(post, tone, chat=-100123):
@@ -626,6 +679,7 @@ def test_tone_button_on_unknown_post():
 def test_rating_command_shows_anonymous_rating():
     bot, feedback, chat, tg, post = escalated_with_feedback()
     asyncio.run(bot.on_operator_reply(operator_msg(Chat(), "Ответ", post), tg))
+    asyncio.run(bot.on_end_button(end_callback(chat), tg))
     asyncio.run(bot.on_rate(rate_callback(chat, rate_data(tg.sent[-1][2]))[0], tg))
     support = Chat()
     asyncio.run(bot.on_rating(operator_msg(support, "/rating", None)))
@@ -650,3 +704,22 @@ def test_client_command_routed_before_operator_relay():
             "reply_to_message": {"message_id": 5, "date": datetime.now(), "chat": chat, "text": "Эскалация"}}
     asyncio.run(dp.feed_update(Bot("1:TEST"), Update(update_id=1, message=data)))
     assert bot.routed == ["note"]
+
+
+def test_operator_end_command_routed_before_operator_relay():
+    """/end as a reply to an escalation post ends the conversation, never relayed to the client."""
+    class R(RoutingBot):
+        async def on_operator_end(self, message, bot):
+            self.routed.append("end")
+
+    bot = R(-100123)
+    bot.handoffs.open("telegram", "555", "-100123", "5", BotReply("…", Lang.RU, escalate=True))
+    dp = Dispatcher()
+    dp.include_router(bot.router)
+    chat = {"id": -100123, "type": "supergroup", "title": "support"}
+    data = {"message_id": 10, "date": datetime.now(), "chat": chat, "text": "/end",
+            "entities": [{"type": "bot_command", "offset": 0, "length": 4}],
+            "from": {"id": 9, "is_bot": False, "first_name": "Op"},
+            "reply_to_message": {"message_id": 5, "date": datetime.now(), "chat": chat, "text": "Эскалация"}}
+    asyncio.run(dp.feed_update(Bot("1:TEST"), Update(update_id=1, message=data)))
+    assert bot.routed == ["end"]

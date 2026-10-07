@@ -6,7 +6,7 @@ import pytest
 from ai_support import guardrails
 from ai_support.engine import SupportEngine
 from ai_support.menu import (
-    CHANGE_LANGUAGE_LABEL, CHOOSE_LANGUAGE, LANGUAGE_CHOICES, OPERATOR_LABEL, QUICK_QUESTIONS, SETTINGS_LABEL,
+    CHANGE_LANGUAGE_LABEL, CHOOSE_LANGUAGE, END_LABEL, LANGUAGE_CHOICES, OPERATOR_LABEL, QUICK_QUESTIONS, SETTINGS_LABEL,
     match_menu, menu_rows,
 )
 from ai_support.models import IncomingMessage, Lang
@@ -24,10 +24,11 @@ def test_every_language_offered_and_greeting_in_three_languages():
 @pytest.mark.parametrize("lang", list(Lang))
 def test_menu_has_all_buttons_in_each_language(lang):
     flat = [label for row in menu_rows(lang) for label in row]
-    assert len(flat) == len(QUICK_QUESTIONS) + 2 and len(set(flat)) == len(flat)
+    assert len(flat) == len(QUICK_QUESTIONS) + 3 and len(set(flat)) == len(flat)
     assert all(len(row) <= 2 for row in menu_rows(lang))
     assert match_menu(OPERATOR_LABEL[lang]).kind == "operator"
     assert match_menu(SETTINGS_LABEL[lang]).kind == "settings"
+    assert match_menu(END_LABEL[lang]).kind == "end" and menu_rows(lang)[-1] == [END_LABEL[lang]]
     for q in QUICK_QUESTIONS:
         assert match_menu(q.label[lang]).question is q
         assert q.question[lang].strip()

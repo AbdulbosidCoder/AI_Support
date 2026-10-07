@@ -34,6 +34,9 @@ class ConversationStore:
         self._turns[user_id].append(Turn("user", mask_pii(client_text)))
         self._turns[user_id].append(Turn("assistant", bot_text))
 
+    def clear(self, user_id: str) -> None:
+        self._turns.pop(user_id, None)
+
     def language(self, user_id: str) -> Lang | None:
         return self._lang.get(user_id)
 
@@ -60,6 +63,10 @@ class SupportEngine:
     def recent_turns(self, user_id: str) -> list[Turn]:
         """The client's recent conversation (PII already masked), saved with a hand-off."""
         return self._store.history(user_id)
+
+    def end_conversation(self, user_id: str) -> None:
+        """The conversation ended: the next question starts without the old context (language is kept)."""
+        self._store.clear(user_id)
 
     async def assess_client(self, user_id: str) -> Assessment | None:
         """Internal AI assessment of the client from the recent conversation; None if there is nothing to judge.

@@ -1,8 +1,9 @@
 """Ratings after a case and assessments of clients (SQLite, independent of the channel).
 
 Two directions:
-- The client rates who solved the case: the bot, if the case never reached a person, or the operator
-  who answered. 1-5 stars, or "did not answer" / "could not help" (both count as 1 star).
+- The client rates the conversation once it ends: the client taps "End conversation" (button or command)
+  or the operator ends it. The bot is rated if the conversation never reached a person, otherwise the
+  operator. 1-5 stars, or "did not answer" / "could not help" (both count as 1 star).
 - The operator and the AI assess the client from the conversation: what the problem was, what the
   client suggested, and how they talked (polite / calm / rude). From these the client gets a level.
 
@@ -32,12 +33,26 @@ CREATE TABLE IF NOT EXISTS rating_requests (
     operator_name TEXT,
     language      TEXT NOT NULL,
     topic         TEXT,
-    prompt_ref    TEXT,                   -- channel message carrying the buttons, to remove them later
+    prompt_ref    TEXT,                   -- unused; kept so older databases still match
     status        TEXT NOT NULL DEFAULT 'open',   -- 'open' | 'rated' | 'expired'
     stars         INTEGER,
     outcome       TEXT,                   -- 'stars' | 'no_answer' | 'not_helped'
     created_at    TEXT NOT NULL,
     rated_at      TEXT
+);
+CREATE TABLE IF NOT EXISTS conversations (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel       TEXT NOT NULL,
+    client_id     TEXT NOT NULL,
+    status        TEXT NOT NULL DEFAULT 'open',   -- 'open' | 'closed'
+    handoff_id    INTEGER,                -- set once the conversation reached a person
+    operator_id   TEXT,
+    operator_name TEXT,
+    language      TEXT NOT NULL,
+    topic         TEXT,
+    opened_at     TEXT NOT NULL,
+    closed_at     TEXT,
+    closed_by     TEXT                    -- 'client' | 'operator'
 );
 CREATE TABLE IF NOT EXISTS client_assessments (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -54,7 +69,7 @@ CREATE TABLE IF NOT EXISTS client_assessments (
 """
 
 BOT, OPERATOR = "bot", "operator"
-OPEN, RATED, EXPIRED = "open", "rated", "expired"
+OPEN, RATED, EXPIRED, CLOSED = "open", "rated", "expired", "closed"
 NO_ANSWER, NOT_HELPED = "no_answer", "not_helped"
 TONES = ("polite", "calm", "rude")
 TONE_LABELS = {"polite": "вежливо", "calm": "спокойно", "rude": "грубо"}
@@ -77,6 +92,23 @@ class RatingRequest:
     status: str
     stars: int | None
     outcome: str | None
+
+
+@dataclass
+class Conversation:
+    id: int
+    channel: str
+    client_id: str
+    handoff_id: int | None
+    operator_id: str | None
+    operator_name: str | None
+    language: str
+    topic: str
+
+    @property
+    def target(self) -> str:
+        """Who the client rates when it ends: the operator once a person took the case, else the bot."""
+        return OPERATOR if self.handoff_id is not None else BOT
 
 
 @dataclass
@@ -106,9 +138,9 @@ class Score:
     not_helped: int
 
 
-def asks_bot_rating(reply: BotReply) -> bool:
-    """A real answer from the bot that the client can judge: not a greeting, not an error, not a hand-off."""
-    return bool(reply.topic) and reply.topic != "greeting" and not reply.escalate and not reply.show_menu
+def opens_conversation(reply: BotReply) -> bool:
+    """A real answer or a hand-off: there is now something to rate. Greetings and fixed errors are not."""
+    return reply.escalate or (bool(reply.topic) and reply.topic != "greeting" and not reply.show_menu)
 
 
 def parse_rating(value: str) -> tuple[int, str] | None:
@@ -136,47 +168,80 @@ class FeedbackStore:
         with self._lock, self._db:
             self._db.executescript(_SCHEMA)
 
-    # --- the client rates the bot or the operator -------------------------------------------------
+    # --- conversations: opened by an answer or a hand-off, ended by the client or the operator --------
 
-    def ask(self, channel: str, client_id: str, target: str, language: str, topic: str = "",
-            handoff_id: int | None = None, operator_id: str | None = None,
-            operator_name: str | None = None) -> tuple[RatingRequest, list[RatingRequest]]:
-        """Open a rating request; returns it and the requests it replaces (remove their buttons).
+    def conversation(self, channel: str, client_id: str) -> Conversation | None:
+        """The client's open conversation, if any."""
+        with self._lock:
+            row = self._open(channel, client_id)
+        return _conversation(row) if row else None
 
-        A client has one open bot request (for the latest answer), and one open request per hand-off,
-        so a long conversation is rated once, not once per message.
-        """
+    def conversation_for_handoff(self, handoff_id: int) -> Conversation | None:
+        with self._lock:
+            row = self._db.execute(
+                "SELECT * FROM conversations WHERE handoff_id = ? AND status = ? ORDER BY id DESC LIMIT 1",
+                (handoff_id, OPEN)).fetchone()
+        return _conversation(row) if row else None
+
+    def bot_answered(self, channel: str, client_id: str, language: str, topic: str = "") -> Conversation:
+        """The bot answered: open a conversation, or keep the open one (a hand-off stays a hand-off)."""
         with self._lock, self._db:
-            if target == BOT:
-                old = self._db.execute(
-                    "SELECT * FROM rating_requests WHERE channel = ? AND client_id = ? AND target = ? AND status = ?",
-                    (channel, client_id, BOT, OPEN)).fetchall()
-            else:
-                old = self._db.execute(
-                    "SELECT * FROM rating_requests WHERE handoff_id = ? AND target = ? AND status = ?",
-                    (handoff_id, OPERATOR, OPEN)).fetchall()
-            self._expire([r["id"] for r in old])
+            row = self._open(channel, client_id)
+            if row is None:
+                return _conversation(self._insert(channel, client_id, language, topic))
+            self._db.execute("UPDATE conversations SET language = ?, topic = COALESCE(NULLIF(?, ''), topic) WHERE id = ?",
+                             (language, topic, row["id"]))
+            return _conversation(self._db.execute("SELECT * FROM conversations WHERE id = ?", (row["id"],)).fetchone())
+
+    def escalated(self, channel: str, client_id: str, handoff_id: int, language: str, topic: str = "") -> Conversation:
+        """The conversation reached a person: from now on the operator is rated for it, not the bot."""
+        with self._lock, self._db:
+            row = self._open(channel, client_id) or self._insert(channel, client_id, language, topic)
+            self._db.execute("UPDATE conversations SET handoff_id = ?, language = ? WHERE id = ?",
+                             (handoff_id, language, row["id"]))
+            return _conversation(self._db.execute("SELECT * FROM conversations WHERE id = ?", (row["id"],)).fetchone())
+
+    def operator_replied(self, channel: str, client_id: str, handoff_id: int, language: str,
+                         operator_id: str | None, operator_name: str | None) -> Conversation:
+        """Remember who answered; a reply after the conversation ended opens it again."""
+        with self._lock, self._db:
+            row = self._open(channel, client_id) or self._insert(channel, client_id, language, "")
+            self._db.execute(
+                "UPDATE conversations SET handoff_id = ?, operator_id = ?, operator_name = ? WHERE id = ?",
+                (handoff_id, operator_id, operator_name, row["id"]))
+            return _conversation(self._db.execute("SELECT * FROM conversations WHERE id = ?", (row["id"],)).fetchone())
+
+    def end(self, channel: str, client_id: str, by: str) -> tuple[Conversation, RatingRequest] | None:
+        """Close the client's open conversation and open its one rating request; None if nothing is open."""
+        with self._lock, self._db:
+            row = self._open(channel, client_id)
+            if row is None:
+                return None
+            self._db.execute("UPDATE conversations SET status = ?, closed_at = ?, closed_by = ? WHERE id = ?",
+                             (CLOSED, _now(), by, row["id"]))
+            c = _conversation(row)
             cur = self._db.execute(
                 """INSERT INTO rating_requests (channel, client_id, target, handoff_id, operator_id, operator_name,
                                                 language, topic, created_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (channel, client_id, target, handoff_id, operator_id, operator_name, language, topic, _now()),
+                (channel, client_id, c.target, c.handoff_id, c.operator_id, c.operator_name, c.language, c.topic,
+                 _now()),
             )
-            row = self._db.execute("SELECT * FROM rating_requests WHERE id = ?", (cur.lastrowid,)).fetchone()
-        return _request(row), [_request(r) for r in old]
+            req = self._db.execute("SELECT * FROM rating_requests WHERE id = ?", (cur.lastrowid,)).fetchone()
+        return c, _request(req)
 
-    def case_escalated(self, channel: str, client_id: str) -> list[RatingRequest]:
-        """The case went to a person: the bot is not rated for it; returns the bot requests closed."""
-        with self._lock, self._db:
-            old = self._db.execute(
-                "SELECT * FROM rating_requests WHERE channel = ? AND client_id = ? AND target = ? AND status = ?",
-                (channel, client_id, BOT, OPEN)).fetchall()
-            self._expire([r["id"] for r in old])
-        return [_request(r) for r in old]
+    def _open(self, channel: str, client_id: str) -> sqlite3.Row | None:
+        return self._db.execute(
+            "SELECT * FROM conversations WHERE channel = ? AND client_id = ? AND status = ? ORDER BY id DESC LIMIT 1",
+            (channel, client_id, OPEN)).fetchone()
 
-    def set_prompt_ref(self, request_id: int, ref: str) -> None:
-        with self._lock, self._db:
-            self._db.execute("UPDATE rating_requests SET prompt_ref = ? WHERE id = ?", (ref, request_id))
+    def _insert(self, channel: str, client_id: str, language: str, topic: str) -> sqlite3.Row:
+        cur = self._db.execute(
+            "INSERT INTO conversations (channel, client_id, language, topic, opened_at) VALUES (?, ?, ?, ?, ?)",
+            (channel, client_id, language, topic, _now()))
+        return self._db.execute("SELECT * FROM conversations WHERE id = ?", (cur.lastrowid,)).fetchone()
+
+    # --- the client rates the ended conversation --------------------------------------------------
 
     def request(self, request_id: int) -> RatingRequest | None:
         with self._lock:
@@ -184,7 +249,7 @@ class FeedbackStore:
         return _request(row) if row else None
 
     def rate(self, request_id: int, client_id: str, value: str) -> RatingRequest:
-        """Save the client's rating; a client may change it while it is still the latest request."""
+        """Save the client's rating; the client may change it."""
         parsed = parse_rating(value)
         r = self.request(request_id)
         if r is None or r.client_id != client_id or parsed is None:
@@ -198,11 +263,6 @@ class FeedbackStore:
                 (RATED, stars, outcome, _now(), request_id),
             )
         return self.request(request_id)  # type: ignore[return-value]
-
-    def _expire(self, ids: list[int]) -> None:
-        if ids:
-            self._db.execute(f"UPDATE rating_requests SET status = ? WHERE id IN ({','.join('?' * len(ids))})",
-                             (EXPIRED, *ids))
 
     # --- the operator and the AI assess the client ------------------------------------------------
 
@@ -372,6 +432,11 @@ def render_assessment(source: str, a: Assessment, level: Level | None = None) ->
     if level is not None:
         lines.append(f"Уровень клиента: {level}")
     return "\n".join(lines)
+
+
+def _conversation(row: sqlite3.Row) -> Conversation:
+    return Conversation(row["id"], row["channel"], row["client_id"], row["handoff_id"], row["operator_id"],
+                        row["operator_name"], row["language"], row["topic"] or "")
 
 
 def _request(row: sqlite3.Row) -> RatingRequest:
