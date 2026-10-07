@@ -141,10 +141,7 @@ def test_clients_search_and_phone_when_present(tmp_path):
     data = AdminData(db)
     assert {c["chat_id"] for c in data.clients()} == {"7", "8"}
     assert [c["chat_id"] for c in data.clients("anv")] == ["7"]
-    with data._lock:  # the registration change adds a phone column
-        data._db.execute("ALTER TABLE users ADD COLUMN phone TEXT")
-        data._db.execute("UPDATE users SET phone = '+998901112233' WHERE chat_id = '8'")
-        data._db.commit()
+    users.set_phone("telegram", "8", "+998901112233")
     assert [c["phone"] for c in data.clients("90111")] == ["+998901112233"]
 
 
@@ -250,7 +247,8 @@ def test_only_listed_operators_reach_the_client():
     assert tg.sent == [] and stranger.answers == [NOT_OPERATOR]
     operator = FakeMessage("Tekshiryapmiz", -100, 10, reply_to=NS(message_id=55))
     asyncio.run(bot.on_operator_reply(operator, tg))
-    assert tg.sent[0] == (7, "Tekshiryapmiz")
+    client, text = tg.sent[0]
+    assert client == 7 and text.endswith(":\nTekshiryapmiz")  # signed as the support specialist
 
 
 def test_session_prefers_messages_saved_with_conversation_id(tmp_path):

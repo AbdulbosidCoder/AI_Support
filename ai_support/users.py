@@ -2,7 +2,8 @@
 
 Every client who opens the bot is stored here. The chosen language drives menus and fixed
 replies now and is meant for notifications later (v2), so the chat id to reach the client
-is kept too.
+is kept too. Registration: the client shares their phone number (Telegram contact) once;
+the number is kept to improve client service later and is shown to support staff only.
 """
 from __future__ import annotations
 
@@ -25,11 +26,15 @@ CREATE TABLE IF NOT EXISTS users (
     full_name     TEXT,
     platform_lang TEXT,
     language      TEXT,
+    phone         TEXT,
+    registered_at TEXT,
     created_at    TEXT NOT NULL,
     updated_at    TEXT NOT NULL,
     PRIMARY KEY (channel, user_id)
 )
 """
+# Columns added after the first release; older databases get them on start.
+_ADDED_COLUMNS = {"phone": "TEXT", "registered_at": "TEXT"}
 
 
 @dataclass
@@ -43,12 +48,19 @@ class User:
     platform_lang: str | None = None
     # Language the client chose; None until they pick one.
     language: Lang | None = None
+    # Phone number the client shared on registration (digits with a leading +); None until registered.
+    phone: str | None = None
+    registered_at: str | None = None
     created_at: str = ""
     updated_at: str = ""
 
     @property
     def lang(self) -> Lang:
         return self.language or DEFAULT_LANGUAGE
+
+    @property
+    def registered(self) -> bool:
+        return bool(self.phone)
 
 
 def _now() -> str:
@@ -64,6 +76,10 @@ class UserStore:
         self._lock = threading.Lock()
         with self._lock, self._db:
             self._db.execute(_SCHEMA)
+            have = {r["name"] for r in self._db.execute("PRAGMA table_info(users)")}
+            for name, kind in _ADDED_COLUMNS.items():
+                if name not in have:
+                    self._db.execute(f"ALTER TABLE users ADD COLUMN {name} {kind}")
 
     def get(self, channel: str, user_id: str) -> User | None:
         with self._lock:
@@ -94,6 +110,16 @@ class UserStore:
                 (lang.value, _now(), channel, user_id),
             )
 
+    def set_phone(self, channel: str, user_id: str, phone: str) -> None:
+        """Registration: save the client's phone number (normalised to + and digits)."""
+        now = _now()
+        with self._lock, self._db:
+            self._db.execute(
+                """UPDATE users SET phone = ?, registered_at = COALESCE(registered_at, ?), updated_at = ?
+                   WHERE channel = ? AND user_id = ?""",
+                (normalize_phone(phone), now, now, channel, user_id),
+            )
+
     def by_language(self, channel: str, lang: Lang) -> list[User]:
         """Clients to notify in a given language (v2 notifications); not-yet-chosen counts as the default."""
         with self._lock:
@@ -111,10 +137,17 @@ class UserStore:
         self._db.close()
 
 
+def normalize_phone(phone: str) -> str:
+    """Telegram sends numbers with or without "+"; keep "+" and digits only."""
+    digits = "".join(ch for ch in phone if ch.isdigit())
+    return f"+{digits}" if digits else ""
+
+
 def _user(row: sqlite3.Row) -> User:
     lang = row["language"]
     return User(
         channel=row["channel"], user_id=row["user_id"], chat_id=row["chat_id"], username=row["username"],
         full_name=row["full_name"], platform_lang=row["platform_lang"],
-        language=Lang(lang) if lang else None, created_at=row["created_at"], updated_at=row["updated_at"],
+        language=Lang(lang) if lang else None, phone=row["phone"], registered_at=row["registered_at"],
+        created_at=row["created_at"], updated_at=row["updated_at"],
     )

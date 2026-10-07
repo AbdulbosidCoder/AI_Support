@@ -13,6 +13,7 @@ from ai_support.engine import SupportEngine
 from ai_support.knowledge import KnowledgeBase
 from ai_support.models import IncomingMessage, Lang, VideoAttachment
 from ai_support.prompt import build_system_prompt
+from ai_support.users import UserStore
 from ai_support.videos import VideoLibrary
 from fakes import FakeLLM, FakeSTT, answer
 
@@ -152,7 +153,12 @@ def client_msg(chat, text, uid=42):
 
 def tg_bot(tmp_path):
     llm = FakeLLM(answer("Xonsaroy Pay ilovasida «To'lov» bo'limini oching. Video quyida.", "uz_latn", topic=TOPIC))
-    return TelegramSupportBot(Settings(), engine_with_video(tmp_path, llm))
+    users = UserStore(":memory:")
+    for uid in ("42", "43"):  # registered clients: language chosen and phone shared
+        users.touch("telegram", uid, uid)
+        users.set_language("telegram", uid, Lang.UZ_LATN)
+        users.set_phone("telegram", uid, "998901234567")
+    return TelegramSupportBot(Settings(), engine_with_video(tmp_path, llm), users)
 
 
 def test_telegram_sends_text_then_video_and_reuses_the_upload(tmp_path):
