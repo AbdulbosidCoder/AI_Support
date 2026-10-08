@@ -80,7 +80,8 @@ from ..language import asks_for_operator, is_small_talk
 from ..llm import Turn
 from ..menu import (
     CHANGE_LANGUAGE_LABEL, CHANGE_PHONE_LABEL, CHOOSE_LANGUAGE, END_LABEL, LANGUAGE_CHOICES, MENU_LABEL, OPERATOR_LABEL,
-    BACK_LABEL, CATEGORIES, SETTINGS_LABEL, category, match_menu,
+    BACK_LABEL, CATEGORIES, NEXT_PAGE_LABEL, PREV_PAGE_LABEL, QUESTIONS_PER_PAGE, SETTINGS_LABEL, button_label, category,
+    match_menu,
 )
 from ..models import Audio, BotReply, Image, IncomingMessage, Lang, VideoAttachment
 from ..operators import Operator, OperatorStore, pick_free
@@ -136,7 +137,8 @@ def phone_keyboard(lang: Lang) -> ReplyKeyboardMarkup:
 
 def main_keyboard(lang: Lang) -> InlineKeyboardMarkup:
     """The client's menu: topics two per row, then operator and settings, "end conversation" last."""
-    topics = [InlineKeyboardButton(text=c.label[lang], callback_data=f"cat:{c.id}") for c in CATEGORIES]
+    topics = [InlineKeyboardButton(text=button_label(c.id, c.label[lang]), callback_data=f"cat:{c.id}")
+              for c in CATEGORIES]
     return InlineKeyboardMarkup(inline_keyboard=[topics[i:i + 2] for i in range(0, len(topics), 2)] + [
         [InlineKeyboardButton(text=OPERATOR_LABEL[lang], callback_data="op"),
          InlineKeyboardButton(text=SETTINGS_LABEL[lang], callback_data="settings")],
@@ -148,17 +150,32 @@ def main_keyboard(lang: Lang) -> InlineKeyboardMarkup:
 quick_keyboard = main_keyboard
 
 
-def category_keyboard(cat, lang: Lang, questions: list[tuple[str, str]] | None = None) -> InlineKeyboardMarkup:
+def page_count(total: int) -> int:
+    return max(1, -(-total // QUESTIONS_PER_PAGE))
+
+
+def category_keyboard(cat, lang: Lang, questions: list[tuple[str, str]] | None = None,
+                      page: int = 0) -> InlineKeyboardMarkup:
     """A topic's questions, one per row so the full question fits, and "back" to the topics.
 
     `questions` are (id, button text) as the admin panel left them (ai_support/guides.py); by default the
-    built-in ones.
+    built-in ones. More than QUESTIONS_PER_PAGE are shown a page at a time, with previous/next buttons.
     """
     if questions is None:
         questions = [(q.id, q.label[lang]) for q in cat.questions]
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=label, callback_data=f"q:{qid}")] for qid, label in questions
-    ] + [[InlineKeyboardButton(text=BACK_LABEL[lang], callback_data="menu")]])
+    pages = page_count(len(questions))
+    page = min(max(page, 0), pages - 1)
+    shown = questions[page * QUESTIONS_PER_PAGE:(page + 1) * QUESTIONS_PER_PAGE]
+    rows = [[InlineKeyboardButton(text=button_label(qid, label), callback_data=f"q:{qid}")] for qid, label in shown]
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text=PREV_PAGE_LABEL[lang], callback_data=f"cat:{cat.id}:{page - 1}"))
+    if page < pages - 1:
+        nav.append(InlineKeyboardButton(text=NEXT_PAGE_LABEL[lang], callback_data=f"cat:{cat.id}:{page + 1}"))
+    if nav:
+        rows.append(nav)
+    return InlineKeyboardMarkup(inline_keyboard=rows + [[InlineKeyboardButton(text=BACK_LABEL[lang],
+                                                                              callback_data="menu")]])
 
 
 def settings_keyboard(lang: Lang) -> InlineKeyboardMarkup:
@@ -549,15 +566,21 @@ class TelegramSupportBot:
             await self._show(callback, t("main_menu", user.lang), main_keyboard(user.lang))
 
     async def on_category(self, callback: CallbackQuery) -> None:
-        """A topic in the menu: the menu message turns into that topic's questions."""
-        cat = category((callback.data or "").split(":", 1)[1])
+        """A topic in the menu (or a page of it): the menu message turns into that topic's questions."""
+        parts = (callback.data or "").split(":")
+        cat = category(parts[1]) if len(parts) > 1 else None
+        page = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
         if cat is None:
             await callback.answer()
             return
         user = await self._registered_callback(callback)
         if user is not None:
-            await self._show(callback, f"{cat.label[user.lang]}\n\n{t('pick_question', user.lang)}",
-                             category_keyboard(cat, user.lang, self.guides.menu(cat.id, user.lang)))
+            questions = self.guides.menu(cat.id, user.lang)
+            pages = page_count(len(questions))
+            page = min(page, pages - 1)
+            title = cat.label[user.lang] + (f" ({page + 1}/{pages})" if pages > 1 else "")
+            await self._show(callback, f"{title}\n\n{t('pick_question', user.lang)}",
+                             category_keyboard(cat, user.lang, questions, page))
 
     async def on_settings_button(self, callback: CallbackQuery) -> None:
         user = await self._registered_callback(callback)

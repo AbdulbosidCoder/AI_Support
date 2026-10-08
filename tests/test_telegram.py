@@ -1234,7 +1234,7 @@ def test_menu_tree_topic_then_full_question_in_one_message():
     text, kb = chat.messages[menu]
     labels = [row[0].text for row in kb.inline_keyboard]
     assert chat.order == [menu] and text.startswith("Ro'yxatdan o'tish va kirish")
-    assert "Ro'yxatdan o'tishda muammo bo'ldi" in labels and kb.inline_keyboard[-1][0].callback_data == "menu"
+    assert "⚠️ Ro'yxatdan o'tishda muammo bo'ldi" in labels and kb.inline_keyboard[-1][0].callback_data == "menu"
     asyncio.run(bot.on_menu_button(chat.tap(menu, "menu")))  # back to the topics, same message
     assert chat.order == [menu] and chat.messages[menu][1].inline_keyboard[0][0].callback_data == "cat:registration"
     asyncio.run(bot.on_category(chat.tap(menu, "cat:registration")))

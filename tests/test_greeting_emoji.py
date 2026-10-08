@@ -27,9 +27,16 @@ def greetings(text: str) -> int:
     return sum(text.count(g) for g in GREETINGS)
 
 
+def _topic_or_question(data: str | None) -> bool:
+    """A topic ("cat:<id>") or question ("q:<id>") button; page buttons ("cat:<id>:<page>") are not."""
+    parts = (data or "").split(":")
+    return (parts[0] == "cat" and len(parts) == 2) or parts[0] == "q"
+
+
 def buttons(markup) -> list[str]:
+    """Button texts, except topic and question buttons: those may start with a simple emoji (menu.ICONS)."""
     if isinstance(markup, InlineKeyboardMarkup):
-        return [b.text for row in markup.inline_keyboard for b in row]
+        return [b.text for row in markup.inline_keyboard for b in row if not _topic_or_question(b.callback_data)]
     if isinstance(markup, ReplyKeyboardMarkup):
         return [b.text for row in markup.keyboard for b in row]
     return []
@@ -124,7 +131,7 @@ def test_strip_greeting(raw, clean):
 
 # --- no emoji ------------------------------------------------------------------------------------
 
-def test_no_emoji_in_any_fixed_client_text():
+def test_no_emoji_in_any_fixed_client_text_or_other_buttons():
     texts = [CHOOSE_LANGUAGE] + [label for _, label in LANGUAGE_CHOICES]
     texts += [v for per_lang in _T.values() for v in per_lang.values()]
     for lang in Lang:
@@ -161,3 +168,83 @@ def test_model_answer_without_emoji_and_greeting_reaches_client():
     reply = asyncio.run(engine.handle(IncomingMessage("1", "как добавить карту")))
     assert reply.text == "Откройте «Kartalarim» → «Qo'shish»."
     assert guardrails.find_violations(reply.text) == []
+
+
+# --- emoji on topic and question buttons, pages of questions -------------------------------------
+
+def test_topic_and_question_buttons_carry_a_simple_emoji_but_the_question_stays_plain():
+    from ai_support.menu import ICONS, button_label, quick_question
+    for lang in Lang:
+        topics = [b for row in main_keyboard(lang).inline_keyboard for b in row if _topic_or_question(b.callback_data)]
+        assert len(topics) == len(CATEGORIES) and all(EMOJI.search(b.text) for b in topics)
+        for c in CATEGORIES:
+            for row in category_keyboard(c, lang, page=0).inline_keyboard:
+                for b in row:
+                    if (b.callback_data or "").startswith("q:"):
+                        assert b.text.startswith(ICONS[b.callback_data[2:]])
+    q = quick_question("sms_code")
+    assert not EMOJI.search(q.label[Lang.UZ_LATN]) and not EMOJI.search(q.question[Lang.UZ_LATN])
+    assert button_label("sms_code", "💬 SMS") == "💬 SMS"  # an admin's own emoji is not doubled
+    assert button_label("custom_123", "Yangi savol") == "Yangi savol"  # panel questions get none
+
+
+def test_many_questions_are_paged_with_previous_and_next():
+    from ai_support.menu import NEXT_PAGE_LABEL, PREV_PAGE_LABEL, QUESTIONS_PER_PAGE, category
+    cat = category("cards")
+    questions = [(f"x{i}", f"Savol {i}") for i in range(QUESTIONS_PER_PAGE * 2 + 1)]  # 3 pages
+
+    def page(n):
+        kb = category_keyboard(cat, Lang.UZ_LATN, questions, n).inline_keyboard
+        asked = [b.callback_data for row in kb for b in row if b.callback_data.startswith("q:")]
+        nav = {b.text: b.callback_data for b in kb[-2]} if len(kb) > 1 else {}
+        return asked, nav, kb[-1][0].callback_data
+
+    asked, nav, back = page(0)
+    assert asked == [f"q:x{i}" for i in range(QUESTIONS_PER_PAGE)] and back == "menu"
+    assert nav == {NEXT_PAGE_LABEL[Lang.UZ_LATN]: "cat:cards:1"}
+    asked, nav, _ = page(1)
+    assert nav == {PREV_PAGE_LABEL[Lang.UZ_LATN]: "cat:cards:0", NEXT_PAGE_LABEL[Lang.UZ_LATN]: "cat:cards:2"}
+    asked, nav, _ = page(2)
+    assert asked == [f"q:x{QUESTIONS_PER_PAGE * 2}"] and nav == {PREV_PAGE_LABEL[Lang.UZ_LATN]: "cat:cards:1"}
+    assert page(99)[0] == page(2)[0]  # an old page button past the end shows the last page
+    # Few questions: one page, no paging row.
+    kb = category_keyboard(cat, Lang.UZ_LATN, questions[:2]).inline_keyboard
+    assert len(kb) == 3 and kb[-1][0].callback_data == "menu"
+
+
+def test_client_pages_through_a_topic_in_the_same_message():
+    from test_telegram import AppChat, app_msg
+    from ai_support.menu import NEXT_PAGE_LABEL, QUESTIONS_PER_PAGE, category
+    bot, users = make_bot()
+    chat = AppChat()
+    asyncio.run(bot.on_start(app_msg(chat, "/start")))
+    menu = chat.order[-1]
+    total = len(category("registration").questions)
+    assert total > QUESTIONS_PER_PAGE
+    asyncio.run(bot.on_category(chat.tap(menu, "cat:registration")))
+    text, kb = chat.messages[menu]
+    assert text.startswith("Ro'yxatdan o'tish va kirish (1/2)")
+    assert kb.inline_keyboard[-2][0].text == NEXT_PAGE_LABEL[Lang.UZ_LATN]
+    asyncio.run(bot.on_category(chat.tap(menu, "cat:registration:1")))
+    text, kb = chat.messages[menu]
+    asked = [b.callback_data for row in kb.inline_keyboard for b in row if b.callback_data.startswith("q:")]
+    assert chat.order == [menu] and text.startswith("Ro'yxatdan o'tish va kirish (2/2)")
+    assert asked == [f"q:{q.id}" for q in category("registration").questions[QUESTIONS_PER_PAGE:]]
+    assert not EMOJI.search(text)
+    asyncio.run(bot.on_category(chat.tap(menu, "cat:registration:x")))  # a broken page number: first page
+    assert chat.messages[menu][0].startswith("Ro'yxatdan o'tish va kirish (1/2)")
+
+
+@pytest.mark.parametrize("qid,bad", [
+    ("vpn_on_login", "VPN o'chirildi, hisobingiz blokdan chiqarildi."),
+    ("app_settings", "Limitingizni oshirib qo'ydik."),
+])
+def test_questions_on_a_later_page_still_go_through_guardrails(qid, bad):
+    from test_telegram import AppChat, app_msg
+    bot, users = make_bot(FakeLLM(answer(bad, "uz_latn")))
+    chat = AppChat()
+    asyncio.run(bot.on_start(app_msg(chat, "/start")))
+    menu = chat.order[-1]
+    asyncio.run(bot.on_quick_question(chat.tap(menu, f"q:{qid}"), chat))
+    sent = [m[0] for m in chat.messages.values()]
+    assert any(t("guardrail", Lang.UZ_LATN) in x for x in sent) and not any(bad in x for x in sent)

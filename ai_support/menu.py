@@ -145,6 +145,30 @@ CATEGORIES: list[Category] = [
     ]),
 ]
 
+# A simple emoji in front of a topic or question button, where one picture says it at a glance. Only
+# buttons carry them: the question as echoed in the chat and sent to the engine stays plain text, and
+# messages to clients have no emoji. Questions added in the admin panel get none.
+ICONS: dict[str, str] = {
+    # topics
+    "registration": "📝", "cards": "💳", "payments": "💸", "transfers": "🔄", "apartment": "🏠",
+    "security": "🛡", "technical": "🛠", "profile": "👤",
+    # questions ("registration" is both a topic and its first question)
+    "registration_problem": "⚠️", "sms_code": "💬", "myid": "🪪", "cannot_login": "🔐",
+    "vpn_on_login": "🌐", "add_card": "➕", "card_sms": "💬", "card_blocked": "🔒", "delete_card": "🗑",
+    "how_to_pay": "💸", "payment_problem": "⏳", "failed_debited": "❗", "double_payment": "🔁",
+    "history": "📜", "how_to_transfer": "🔄", "transfer_not_received": "📭", "wrong_recipient": "↩️",
+    "add_contract": "📄", "apartment_debt": "🏠", "debt_not_updated": "🧾", "schedule_receipt": "📅",
+    "restricted": "🚫", "suspicious": "🕵️", "server_error": "🛠", "app_not_opening": "📵",
+    "app_settings": "⚙️",
+}
+
+
+def button_label(item_id: str, text: str) -> str:
+    """A topic's or question's button text with its emoji, if it has one (and the text lacks it)."""
+    icon = ICONS.get(item_id)
+    return f"{icon} {text}" if icon and not text.startswith(icon) else text
+
+
 # Every question of every category, for lookups by id.
 QUICK_QUESTIONS: list[QuickQuestion] = [q for c in CATEGORIES for q in c.questions]
 
@@ -154,6 +178,11 @@ SETTINGS_LABEL = {Lang.UZ_LATN: "Sozlamalar", Lang.UZ_CYRL: "Созламала�
                   Lang.RU: "Настройки", Lang.EN: "Settings"}
 END_LABEL = {Lang.UZ_LATN: "Suhbatni yakunlash", Lang.UZ_CYRL: "Суҳбатни якунлаш",
              Lang.RU: "Завершить разговор", Lang.EN: "End conversation"}
+# Paging through a topic's questions when there are more than fit one screen (QUESTIONS_PER_PAGE).
+QUESTIONS_PER_PAGE = 5
+PREV_PAGE_LABEL = {Lang.UZ_LATN: "‹ Oldingi", Lang.UZ_CYRL: "‹ Олдинги", Lang.RU: "‹ Предыдущие",
+                   Lang.EN: "‹ Previous"}
+NEXT_PAGE_LABEL = {Lang.UZ_LATN: "Keyingi ›", Lang.UZ_CYRL: "Кейинги ›", Lang.RU: "Следующие ›", Lang.EN: "Next ›"}
 BACK_LABEL = {Lang.UZ_LATN: "Orqaga", Lang.UZ_CYRL: "Орқага", Lang.RU: "Назад", Lang.EN: "Back"}
 MENU_LABEL = {Lang.UZ_LATN: "Menyu", Lang.UZ_CYRL: "Меню", Lang.RU: "Меню", Lang.EN: "Menu"}
 CHANGE_PHONE_LABEL = {Lang.UZ_LATN: "Raqamni yangilash", Lang.UZ_CYRL: "Рақамни янгилаш",

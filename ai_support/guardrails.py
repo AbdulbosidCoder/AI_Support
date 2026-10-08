@@ -68,6 +68,11 @@ FORBIDDEN_ANSWERS: dict[str, list[str]] = {
     ],
     "changed_limit_or_data": [
         r"лимит\s+(увеличен|повышен|изменён|изменен)", r"limit\s+(oshirildi|o'zgartirildi)",
+        # with a suffix ("limitingiz") or said as done by us ("oshirib qo'ydik", "увеличили вам лимит")
+        r"limit\w*\s+(oshirildi|o'zgartirildi|oshird(ik|im)|o'zgartird(ik|im)|(oshirib|o'zgartirib)\s+(qo'yd|berd)(ik|im))",
+        r"лимит\w*\s+(оширилди|ўзгартирилди|оширд(ик|им)|ўзгартирд(ик|им)|(ошириб|ўзгартириб)\s+(қўйд|берд)(ик|им))",
+        r"(увеличили|повысили|изменили)\s+(вам\s+)?лимит", r"лимит\w*\s+(увеличили|повысили|изменили)",
+        r"we\s+(have\s+)?(increased|raised|changed)\s+(your\s+|the\s+)?limit",
         r"limit\s+(has\s+been\s+|was\s+)?(increased|raised|changed)", r"(данные|пинфл)\s+(изменены|обновлены)",
         r"платёж\s+отменён|платеж\s+отменен|to'lov\s+bekor\s+qilindi|payment\s+(has\s+been\s+|was\s+)?cancel+ed",
     ],
