@@ -400,3 +400,19 @@ def test_overall_and_per_client_statistics(tmp_path):
     assert overall[0] == 200 and len(overall[1]["daily"]) == 3
     assert one[0] == 200 and one[1]["name"] == "Bobur" and one[1]["operators"] == []
     assert missing[0] == 404 and stranger[0] == 403
+
+
+def test_panel_shows_who_a_new_conversation_waits_for_and_busy_operators(tmp_path):
+    db = tmp_path / "bot.sqlite3"
+    users, handoffs, feedback, log = stores(db)
+    OperatorStore(db).add("10", "Dilnoza")
+    reply = BotReply("Ulayapman", Lang.UZ_LATN, escalate=True, client_text="Salom")
+    hid = handoffs.open("telegram", "7", "-100", "55", reply)
+    handoffs.assign(hid, "10", "Dilnoza", 60)
+    feedback.escalated("telegram", "7", hid, "uz_latn")
+    data = AdminData(db)
+    s = data.sessions()[0]
+    assert (s["assigned_name"], s["handoff_status"]) == ("Dilnoza", "waiting")
+    assert data.operator_list()[0]["busy"] == 1
+    handoffs.close_handoff(hid)
+    assert data.operator_list()[0]["busy"] == 0

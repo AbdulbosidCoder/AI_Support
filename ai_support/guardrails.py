@@ -64,7 +64,7 @@ FORBIDDEN_ANSWERS: dict[str, list[str]] = {
     ],
     "unblocked": [
         r"(мы\s+)?(разблокировал|разблокируем)", r"блокировк\w+\s+снят", r"blokdan\s+chiqard(ik|im)", r"blokdan\s+chiqaramiz",
-        r"блокдан\s+чиқардик", r"(we\s+)?(have\s+)?unblocked", r"we\s+will\s+unblock",
+        r"blokdan\s+chiqarildi", r"блокдан\s+чиқардик", r"блокдан\s+чиқарилди", r"(we\s+)?(have\s+)?unblocked", r"we\s+will\s+unblock",
     ],
     "changed_limit_or_data": [
         r"лимит\s+(увеличен|повышен|изменён|изменен)", r"limit\s+(oshirildi|o'zgartirildi)",

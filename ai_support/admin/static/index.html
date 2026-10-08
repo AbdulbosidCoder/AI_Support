@@ -285,9 +285,15 @@ async function statsSection() {
     </div>`;
 }
 
+function sessionWho(s) {
+  if (s.operator_name) return s.operator_name;
+  if (s.assigned_name && s.handoff_status === "waiting") return `${s.assigned_name} · ждём ответа оператора`;
+  return s.escalated ? "ждёт оператора" : "бот";
+}
+
 function sessionRow(s) {
   const dot = s.status === "open" ? (s.escalated && !s.operator_id ? "wait" : "open") : "";
-  const who = s.operator_name || (s.escalated ? "ждёт оператора" : "бот");
+  const who = sessionWho(s);
   const rating = s.rating ? ` · ${s.rating.stars}★` : "";
   return `<div class="row" onclick="location.hash='session=${s.id}'"><span class="dot ${dot}"></span>
     <div class="grow"><div class="title">${esc(s.client_name)}</div>
@@ -390,7 +396,7 @@ async function session(id) {
       if (day(m.created_at) !== day((s.messages[i - 1] || {}).created_at)) rows.push(`<div class="day">${day(m.created_at)}</div>`);
       rows.push(bubble(m, s.messages[i - 1], s.messages[i + 1]));
     });
-    const who = s.operator_name || (s.escalated ? "ждёт оператора" : "бот");
+    const who = sessionWho(s);
     const live = s.status === "open";
     const stillAtBottom = innerHeight + scrollY >= document.body.scrollHeight - 80;
     view.innerHTML = `<div class="tgchat">
@@ -418,11 +424,12 @@ async function operators() {
       <button class="btn">Добавить</button></form>
     <p class="muted">Оператор открывает клиентский бот, нажимает /start и при регистрации делится этим номером:
       бот сам привяжет его Telegram id. Пока нет ни одного привязанного оператора, клиентам отвечает любой
-      участник чата поддержки; потом — только активные операторы из списка.</p>
+      участник чата поддержки; потом — только активные операторы из списка. Новое обращение сначала получает
+      свободный оператор; если все заняты или он молчит минуту, клиенту отвечает AI.</p>
     <div class="list">${ops.map(o => `<div class="row"><span class="dot ${o.active ? "open" : ""}"></span>
       <div class="grow" onclick="location.hash='sessions'; sessions.state={status:'', operator:'${esc(o.user_id || "")}'}">
         <div class="title">${esc(o.name)} ${o.username ? "@" + esc(o.username) : ""}</div>
-        <div class="muted">${o.registered && !o.linked ? '<span class="pill">ждём регистрации в боте</span> ' : ""}${[o.phone, o.user_id ? "id " + o.user_id : ""].filter(Boolean).map(esc).join(" · ")} · ответов ${o.replies} · сессий ${o.sessions} (открыто ${o.sessions_open})
+        <div class="muted">${o.registered && !o.linked ? '<span class="pill">ждём регистрации в боте</span> ' : ""}${o.busy ? '<span class="pill">занят с клиентом</span> ' : ""}${[o.phone, o.user_id ? "id " + o.user_id : ""].filter(Boolean).map(esc).join(" · ")} · ответов ${o.replies} · сессий ${o.sessions} (открыто ${o.sessions_open})
           · ${o.rating !== null ? o.rating + "★ (" + o.ratings + ")" : "оценок нет"}
           ${o.last_reply ? " · последний ответ " + when(o.last_reply) : ""}</div></div>
       <button class="btn ghost" data-id="${esc(o.key)}" data-name="${esc(o.name)}"
