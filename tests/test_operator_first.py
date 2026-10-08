@@ -155,7 +155,7 @@ def test_silent_operator_after_a_greeting_ai_asks_how_it_can_help():
     assert greeting.text == (f"{t('assistant_name', Lang.UZ_LATN)}:\n{t('ai_takeover', Lang.UZ_LATN)}\n\n"
                              f"{t('ai_how_help', Lang.UZ_LATN)}")
     assert greeting.markup.inline_keyboard  # the topics menu
-    assert t("ai_takeover", Lang.UZ_LATN).startswith("Assalomu alaykum")
+    assert "Assalomu" not in t("ai_takeover", Lang.UZ_LATN)  # the client was greeted on /start already
 
 
 def test_all_operators_busy_ai_greets_at_once():
