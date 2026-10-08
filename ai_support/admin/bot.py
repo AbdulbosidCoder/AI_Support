@@ -1,9 +1,15 @@
-"""The admin bot: a separate Telegram bot for admins (ADMIN_IDS) only.
+"""The admin bot: a separate Telegram bot for the support team.
 
-Everything is on inline buttons: open the web panel (a Telegram mini app with sessions shown as
-chats), the overview, the operator list (turn an operator off or on) and adding an operator by a
-forwarded message or "<id> <name>". Anyone else is told their Telegram id, so it can be added to
-ADMIN_IDS.
+Admins (ADMIN_IDS) get everything on inline buttons: open the web panel (a Telegram mini app with sessions
+shown as chats), the overview, the operator list (turn an operator off or on) and adding an operator by a
+forwarded message or "<id> <name>".
+
+Admins and active operators get the "Support" menu: the clients waiting for a person or being answered by
+one. Opening a client starts a dialog: whatever the staff member writes (text or a photo) reaches the
+client through the client bot as a plain message, as from a support agent. New clients and their messages
+come here too (ai_support/staff.py), so the support team never has to use the client bot.
+
+Anyone else is told their Telegram id; an operator added by phone shares their number here to be linked.
 """
 from __future__ import annotations
 
@@ -15,14 +21,21 @@ from aiogram.types import (
     CallbackQuery,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    KeyboardButton,
     MenuButtonWebApp,
     Message,
+    ReactionTypeEmoji,
+    ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
     WebAppInfo,
 )
 
+from ..botapi import Call, telegram_call
+from ..chatlog import BOT, CLIENT, OPERATOR, SYSTEM
 from ..config import Settings
 from ..operators import OperatorError, to_phone
 from .data import AdminData, render_overview
+from .relay import end_conversation, send_to_client
 
 log = logging.getLogger(__name__)
 
@@ -33,10 +46,16 @@ ADD_HELP = ("Чтобы добавить оператора, отправьте 
             "бот сам запомнит его Telegram id. Если он уже зарегистрирован в боте, он станет оператором сразу.\n\n"
             "Можно и по Telegram id: <code>123456789 Имя</code> или переслать сюда его сообщение.")
 PANEL_LABEL = "🖥 Открыть панель"
+SUPPORT_LABEL = "🎧 Поддержка"
+SHARE_PHONE_LABEL = "📱 Я оператор: поделиться номером"
+STATE = {"waiting": "🔴 ждёт ответа", "ai": "🟡 отвечает AI", "operator": "🟢"}
+DIALOG_HELP = ("Пишите сюда: каждое сообщение (текст или фото) уйдёт клиенту обычным сообщением, "
+               "как от сотрудника поддержки. Клиент не видит, что вы пишете через бота.")
+MAX_TEXT = 4000
 
 
 def menu_keyboard(settings: Settings) -> InlineKeyboardMarkup:
-    rows = []
+    rows = [[InlineKeyboardButton(text=SUPPORT_LABEL, callback_data="a:sup")]]
     if settings.admin_url:
         rows.append([InlineKeyboardButton(text=PANEL_LABEL, web_app=WebAppInfo(url=settings.admin_url))])
     rows += [
@@ -120,36 +139,178 @@ def sessions_text(data: AdminData, limit: int = 10) -> str:
     return "\n".join(lines)
 
 
+def support_view(data: AdminData, admin: bool) -> tuple[str, InlineKeyboardMarkup]:
+    """The support menu: who waits for a person, and who is being answered by whom."""
+    queue = data.support_queue()
+    rows = []
+    for c in queue:
+        state = STATE.get(c["state"], "")
+        if c["state"] == "operator":
+            state += f" {c['operator_name'] or 'специалист'}"
+        rows.append([InlineKeyboardButton(text=f"{c['client_name']} · {state}"[:60],
+                                          callback_data=f"a:chat:{c['client_id']}")])
+    rows.append([InlineKeyboardButton(text="🔄 Обновить", callback_data="a:sup")])
+    if admin:
+        rows.append([InlineKeyboardButton(text="⬅️ Меню", callback_data="a:menu")])
+    if not queue:
+        text = ("🎧 Поддержка\n\nСейчас никто не ждёт специалиста. На все вопросы отвечает AI; если он не может "
+                "помочь, клиент появится здесь, а вам придёт сообщение.")
+    else:
+        waiting = sum(c["state"] != "operator" for c in queue)
+        text = (f"🎧 Поддержка: {len(queue)} клиент(ов), ждут ответа: {waiting}.\n"
+                "Откройте клиента, чтобы увидеть переписку и ответить.")
+    return text, InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def dialog_text(data: AdminData, client_id: str) -> str:
+    target = data.client_target(client_id)
+    name = target["client_name"] if target else client_id
+    lines = [f"💬 {name}", ""]
+    for m in data.recent_messages(client_id):
+        body = (m["text"] or ("[файл]" if m["files"] else "")).strip()
+        if len(body) > 300:
+            body = body[:300] + "…"
+        who = {CLIENT: "👤 Клиент", BOT: "🤖 AI", OPERATOR: f"🎧 {m['operator_name'] or 'Специалист'}",
+               SYSTEM: "·"}.get(m["sender"], m["sender"])
+        lines.append(f"{who}: {body}" if m["sender"] != SYSTEM else f"· {body}")
+    if len(lines) == 2:
+        lines.append("Сообщений пока нет.")
+    lines += ["", DIALOG_HELP]
+    text = "\n".join(lines)
+    return text if len(text) <= 4096 else "…" + text[-4000:]
+
+
+def dialog_keyboard(client_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Завершить разговор", callback_data=f"a:close:{client_id}")],
+        [InlineKeyboardButton(text="⬅️ К списку клиентов", callback_data="a:sup")],
+    ])
+
+
 class AdminBot:
-    def __init__(self, settings: Settings, data: AdminData):
+    def __init__(self, settings: Settings, data: AdminData, client: Call | None = None):
         self.settings = settings
         self.data = data
+        # The client bot's Bot API: staff messages reach clients through it.
+        self.client = client or telegram_call(settings.telegram_token)
         # Admins who tapped "Add operator" and whose next message is the operator.
         self._adding: set[int] = set()
+        # Staff member -> the client they are writing to.
+        self._dialog: dict[int, str] = {}
         self.router = Router()
         admins = F.from_user.id.in_(settings.admin_ids)
+        staff = self.is_staff
         r = self.router
-        r.message.register(self.on_start, CommandStart(), admins)
-        r.message.register(self.on_start, Command("menu"), admins)
+        r.message.register(self.on_start, CommandStart(), staff)
+        r.message.register(self.on_start, Command("menu"), staff)
+        r.message.register(self.on_support_command, Command("support"), staff)
         r.message.register(self.on_add_command, Command("add_operator"), admins)
-        r.message.register(self.on_message, admins, F.chat.type == "private")
-        r.callback_query.register(self.on_callback, F.data.startswith("a:"), admins)
+        r.message.register(self.on_message, staff, F.chat.type == "private")
+        r.callback_query.register(self.on_callback, F.data.startswith("a:"), staff)
+        r.message.register(self.on_stranger_contact, F.chat.type == "private", F.contact)
         r.message.register(self.on_stranger, F.chat.type == "private")
         r.callback_query.register(self.on_stranger_callback)
 
+    def is_staff(self, event: Message | CallbackQuery) -> bool:
+        user = event.from_user
+        return user is not None and self.data.is_staff(user.id, self.settings.admin_ids)
+
+    def is_admin(self, user_id: int) -> bool:
+        return user_id in self.settings.admin_ids
+
+    def staff_name(self, user) -> str:
+        op = next((o for o in self.data.operators.available() if o.user_id == str(user.id)), None)
+        return (op.name if op and op.name and op.name != op.phone else None) or user.full_name or "Специалист"
+
     async def on_stranger(self, message: Message) -> None:
         uid = message.from_user.id if message.from_user else message.chat.id
-        await message.answer(f"Это админ-бот поддержки Xonsaroy Pay, доступ только у администраторов.\n"
-                             f"Ваш Telegram id: <code>{uid}</code>", parse_mode="HTML")
+        await message.answer(
+            f"Это бот команды поддержки Xonsaroy Pay. Ваш Telegram id: <code>{uid}</code>\n\n"
+            "Если администратор добавил вас оператором по номеру телефона, нажмите кнопку ниже и поделитесь им.",
+            parse_mode="HTML", reply_markup=ReplyKeyboardMarkup(
+                keyboard=[[KeyboardButton(text=SHARE_PHONE_LABEL, request_contact=True)]], resize_keyboard=True,
+                one_time_keyboard=True))
+
+    async def on_stranger_contact(self, message: Message) -> None:
+        """An operator added by phone shares their own number: from now on they work here."""
+        c, user = message.contact, message.from_user
+        if user is None or c.user_id != user.id:
+            await message.answer("Поделитесь своим номером кнопкой ниже, а не чужим контактом.")
+            return
+        op = self.data.operators.link(c.phone_number, user.id, user.username, user.full_name)
+        if op is None or not op.active:
+            await message.answer("Этого номера нет в списке операторов. Попросите администратора добавить вас.",
+                                 reply_markup=ReplyKeyboardRemove())
+            return
+        log.info("operator %s linked in the admin bot", user.id)
+        await message.answer(f"✅ Готово, {op.name}: вы оператор поддержки. Новые клиенты будут приходить сюда.",
+                             reply_markup=ReplyKeyboardRemove())
+        await self._send_support(message, user.id)
 
     async def on_stranger_callback(self, callback: CallbackQuery) -> None:
         await callback.answer("Нет доступа")
 
     async def on_start(self, message: Message) -> None:
-        self._adding.discard(message.from_user.id)
+        uid = message.from_user.id
+        self._adding.discard(uid)
+        self._dialog.pop(uid, None)
+        if not self.is_admin(uid):
+            await self._send_support(message, uid)
+            return
         hint = "" if self.settings.admin_url else "\n\n⚠ ADMIN_DOMAIN не задан: веб-панель недоступна."
         await message.answer(f"{render_overview(self.data.overview())}{hint}",
                              reply_markup=menu_keyboard(self.settings))
+
+    async def on_support_command(self, message: Message) -> None:
+        self._dialog.pop(message.from_user.id, None)
+        await self._send_support(message, message.from_user.id)
+
+    async def _send_support(self, message: Message, uid: int) -> None:
+        text, markup = support_view(self.data, self.is_admin(uid))
+        await message.answer(text, reply_markup=markup)
+
+    # --- the dialog with a client ---------------------------------------------------------------------
+
+    async def _open_dialog(self, message: Message, uid: int, client_id: str) -> None:
+        if self.data.client_target(client_id) is None:
+            await message.answer("Клиент не найден.")
+            return
+        self._dialog[uid] = client_id
+        await message.answer(dialog_text(self.data, client_id), reply_markup=dialog_keyboard(client_id))
+
+    async def _relay(self, message: Message, client_id: str) -> None:
+        """The staff member's message goes to the client as a plain message."""
+        user = message.from_user
+        target = self.data.client_target(client_id)
+        if target is None:
+            await message.answer("Клиент не найден.")
+            return
+        text = (message.text or message.caption or "").strip()
+        photo = None
+        if message.photo:
+            photo = await self.download(message)
+        elif not text:
+            await message.answer("Клиенту можно отправить текст или фото.")
+            return
+        if len(text) > (1024 if photo is not None else MAX_TEXT):
+            await message.answer("Слишком длинное сообщение: разделите его на части.")
+            return
+        try:
+            await send_to_client(self.data, self.client, self.settings.support_chat_id, target, text,
+                                 str(user.id), self.staff_name(user), photo, via="админ-бота")
+        except Exception as e:  # noqa: BLE001 - blocked by the client, no token, network: nothing was saved
+            log.warning("staff %s message to %s not sent: %s", user.id, client_id, e)
+            await message.answer(f"⚠ Клиент не получил сообщение: {e}")
+            return
+        log.info("staff %s wrote to client %s from the admin bot", user.id, client_id)
+        try:
+            await message.react([ReactionTypeEmoji(emoji="👌")])  # a quiet "delivered"
+        except Exception:  # noqa: BLE001, S110 - only a mark
+            pass
+
+    async def download(self, message: Message) -> bytes:
+        data = await message.bot.download(message.photo[-1])
+        return data.read()
 
     async def on_add_command(self, message: Message) -> None:
         body = (message.text or "").partition(" ")[2]
@@ -161,9 +322,16 @@ class AdminBot:
 
     async def on_message(self, message: Message) -> None:
         uid = message.from_user.id
-        if uid not in self._adding:
+        if uid in self._adding and self.is_admin(uid):
+            await self._add_message(message)
+        elif uid in self._dialog:
+            await self._relay(message, self._dialog[uid])
+        elif self.is_admin(uid):
             await message.answer("Выберите действие:", reply_markup=menu_keyboard(self.settings))
-            return
+        else:
+            await self._send_support(message, uid)
+
+    async def _add_message(self, message: Message) -> None:
         if message.contact is not None:
             c = message.contact
             name = " ".join(x for x in (c.first_name, c.last_name) if x)
@@ -213,6 +381,14 @@ class AdminBot:
         if message is None:
             await callback.answer()
             return
+        uid = callback.from_user.id
+        if action in ("sup", "chat", "close"):
+            await self._support_callback(callback, message, uid, parts)
+            return
+        if not self.is_admin(uid):
+            await callback.answer("Нет доступа")
+            return
+        self._dialog.pop(uid, None)
         if action == "op" and len(parts) == 4:
             try:
                 if parts[3] == "on" and self.data.operators.get(parts[2]) is None:
@@ -240,10 +416,34 @@ class AdminBot:
             return
         else:
             text, markup = render_overview(self.data.overview()), menu_keyboard(self.settings)
-        try:
-            await message.edit_text(text[:4096], reply_markup=markup)
-        except Exception:  # unchanged or too old to edit: send it anew
-            await message.answer(text[:4096], reply_markup=markup)
+        await _edit_or_send(message, text, markup)
+
+    async def _support_callback(self, callback: CallbackQuery, message: Message, uid: int, parts: list[str]) -> None:
+        action, client_id = parts[1], ":".join(parts[2:])
+        if action == "chat" and client_id:
+            await callback.answer()
+            # Sent anew: the button may be under a notification about the client, which should stay.
+            await self._open_dialog(message, uid, client_id)
+            return
+        if action == "close" and client_id:
+            ended = await end_conversation(self.data, self.client, client_id, self.staff_name(callback.from_user))
+            await callback.answer("Разговор завершён, клиента попросили оценить его" if ended
+                                  else "Разговор уже завершён")
+            for staff, current in list(self._dialog.items()):
+                if current == client_id:
+                    del self._dialog[staff]
+        else:
+            await callback.answer()
+            self._dialog.pop(uid, None)
+        text, markup = support_view(self.data, self.is_admin(uid))
+        await _edit_or_send(message, text, markup)
+
+
+async def _edit_or_send(message: Message, text: str, markup) -> None:
+    try:
+        await message.edit_text(text[:4096], reply_markup=markup)
+    except Exception:  # unchanged or too old to edit: send it anew
+        await message.answer(text[:4096], reply_markup=markup)
 
 
 async def set_panel_button(bot: Bot, settings: Settings) -> None:

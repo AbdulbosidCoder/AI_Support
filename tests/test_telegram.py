@@ -131,7 +131,7 @@ def registered(uid=42, lang=Lang.UZ_LATN, users=None):
 
 def said(text, lang=Lang.UZ_LATN):
     """A model answer as the client sees it: signed by the assistant."""
-    return f"{t('assistant_name', lang)}:\n{text}"
+    return text  # answers are plain chat messages, with no signature
 
 
 def make_bot(llm=None, register=True):
@@ -249,7 +249,7 @@ def test_quick_question_asked_in_chosen_language():
     assert llm.calls[0][1] == q.question[Lang.UZ_CYRL]
     (asked, _), (text, kb) = chat.sent[-2:]
     assert asked == f"{t('your_question', Lang.UZ_CYRL)} {q.question[Lang.UZ_CYRL]}"
-    assert text == said("Javob", Lang.UZ_CYRL) and kb.inline_keyboard[0][0].text == END_LABEL[Lang.UZ_CYRL]
+    assert text == said("Javob", Lang.UZ_CYRL) and kb is None  # a plain chat message, no buttons
 
 
 def test_quick_question_forbidden_answer_replaced():
@@ -272,7 +272,7 @@ def test_operator_button_asks_the_question_first_then_hands_off_in_chosen_langua
     assert chat.sent[-1][0] == said(t("handoff", Lang.EN), Lang.EN) and not llm.calls
 
 
-def test_after_operator_request_the_ai_answers_first_and_offers_a_specialist():
+def test_after_operator_request_the_ai_answers_first_then_a_specialist_if_asked_again():
     llm = FakeLLM(answer("Open «Kartalarim» and tap «+».", "en", topic="add_card"))
     bot, users = make_bot(llm)
     chat = Chat()
@@ -281,10 +281,9 @@ def test_after_operator_request_the_ai_answers_first_and_offers_a_specialist():
     assert chat.sent[-1][0] == t("operator_ai_first", Lang.EN) and not llm.calls
     asyncio.run(bot.on_client_message(client_msg(chat, "How do I add a card?"), chat))
     text, kb = chat.sent[-1]
-    assert llm.calls and text == said("Open «Kartalarim» and tap «+».", Lang.EN)
-    assert [b.callback_data for row in kb.inline_keyboard for b in row] == ["end", "menu", "op"]
-    # The answer did not help: now the client goes to a specialist.
-    asyncio.run(bot.on_operator_button(callback(chat, "op"), chat))
+    assert llm.calls and text == said("Open «Kartalarim» and tap «+».", Lang.EN) and kb is None
+    # The answer did not help and the client asks again: now they go to a specialist.
+    asyncio.run(bot.on_client_message(client_msg(chat, "operator kerak"), chat))
     assert chat.sent[-1][0] == said(t("handoff", Lang.EN), Lang.EN) and len(llm.calls) == 1
 
 
@@ -297,8 +296,7 @@ def test_after_operator_request_a_question_the_ai_cannot_answer_goes_to_a_specia
     asyncio.run(bot.on_operator_button(callback(chat, "op"), chat))
     asyncio.run(bot.on_client_message(client_msg(chat, "My salary card shows a strange fee"), chat))
     text, kb = chat.sent[-1]
-    assert llm.calls and t("handoff", Lang.EN) in text
-    assert "op" not in [b.callback_data for row in kb.inline_keyboard for b in row]
+    assert llm.calls and t("handoff", Lang.EN) in text and kb is None
     assert bot.feedback.conversation("telegram", "42").handoff_id is None  # no support chat in this test
 
 
@@ -338,8 +336,7 @@ def test_mini_menu_button_asks_question_in_chosen_language():
     assert llm.calls[0][1] == q.question[Lang.RU]
     assert chat.sent[-2][0] == f"{t('your_question', Lang.RU)} {q.question[Lang.RU]}"
     text, kb = chat.sent[-1]
-    assert text == said("Kartalarim bo'limiga kiring.", Lang.UZ_LATN)
-    assert [b.callback_data for b in kb.inline_keyboard[0]] == ["end", "menu"]
+    assert text == said("Kartalarim bo'limiga kiring.", Lang.UZ_LATN) and kb is None
 
 
 def test_mini_menu_forbidden_answer_replaced():
@@ -466,7 +463,7 @@ def test_operator_reply_relayed_saved_and_offered_as_candidate():
     post = tg._next
     support = Chat()
     asyncio.run(bot.on_operator_reply(operator_msg(support, "Обновление долга занимает время, проверьте завтра.", post), tg))
-    assert tg.sent[-1] == (42, f"{t('operator_name', Lang.RU)}:\nОбновление долга занимает время, проверьте завтра.")
+    assert tg.sent[-1] == (42, f"Обновление долга занимает время, проверьте завтра.")
     c = handoffs.candidates()[0]
     assert c.question == "Квартплата не обновилась после оплаты" and c.language == "ru"
     text, kb = support.sent[-1]
@@ -483,7 +480,7 @@ def test_escalation_link_survives_bot_restart(tmp_path):
                                    UserStore(":memory:"), HandoffStore(db))
     assert restarted.is_handoff_reply(operator_msg(Chat(), "Javob", post))
     asyncio.run(restarted.on_operator_reply(operator_msg(Chat(), "Javob", post), tg))
-    assert tg.sent[-1] == (42, f"{t('operator_name', Lang.RU)}:\nJavob")
+    assert tg.sent[-1] == (42, f"Javob")
 
 
 def test_approve_updates_bot_knowledge():
@@ -613,11 +610,10 @@ def answered(llm=None):
     return bot, feedback, llm, chat, tg
 
 
-def test_answer_offers_end_button_and_asks_no_rating_yet():
+def test_answer_is_a_plain_message_and_asks_no_rating_yet():
     bot, feedback, llm, chat, tg = answered()
     text, kb = chat.sent[-1]
-    assert text == said("Kartalarim bo'limiga kiring.") and len(kb.inline_keyboard) == 1
-    assert kb.inline_keyboard[0][0].text == END_LABEL[Lang.UZ_LATN]
+    assert text == said("Kartalarim bo'limiga kiring.") and kb is None
     assert tg.sent == [] and feedback.score().count == 0  # no rating request after an answer
 
 
@@ -688,9 +684,8 @@ def test_escalation_carries_ai_assessment_level_and_buttons_for_support_only():
     assert [b.callback_data for b in kb.inline_keyboard[0]] == ["ctone:polite", "ctone:calm", "ctone:rude"]
     assert [b.callback_data for b in kb.inline_keyboard[1]] == ["hnote", "hend"]
     assert "Телефон: +998901234567" in summary
-    # The client sees only the hand-off (with the end button), nothing about the assessment.
-    assert [text for text, _ in chat.sent] == [said("Передаю специалисту.\n\n" + t("handoff", Lang.RU), Lang.RU)]
-    assert chat.sent[-1][1].inline_keyboard[0][0].callback_data == "end"
+    # The client sees only the hand-off as a plain message, nothing about the assessment.
+    assert chat.sent == [(said("Передаю специалисту.\n\n" + t("handoff", Lang.RU), Lang.RU), None)]
 
 
 def escalated_with_feedback(llm=None):
@@ -701,12 +696,11 @@ def escalated_with_feedback(llm=None):
     return bot, feedback, chat, tg, tg._next
 
 
-def test_operator_reply_relayed_with_end_button_and_no_rating():
+def test_operator_reply_relayed_as_a_plain_message_and_no_rating():
     bot, feedback, chat, tg, post = escalated_with_feedback()
     asyncio.run(bot.on_operator_reply(operator_msg(Chat(), "Проверьте раздел «Tarix».", post), tg))
     client, text, kb = tg.sent[-1]
-    assert (client, text) == (42, f"{t('operator_name', Lang.RU)}:\nПроверьте раздел «Tarix».")
-    assert kb.inline_keyboard[0][0].callback_data == "end"
+    assert (client, text, kb) == (42, "Проверьте раздел «Tarix».", None)  # no signature, no buttons
     assert feedback.score().count == 0
 
 
@@ -867,7 +861,7 @@ def test_after_handoff_client_messages_go_to_operator_not_model():
     assert "8600 1234 5678 9012" not in relayed
     # The operator may reply to the relayed message: it still reaches this client.
     asyncio.run(bot.on_operator_reply(operator_msg(Chat(), "Проверим платёж.", tg._next), tg))
-    assert tg.sent[-1][:2] == (42, f"{t('operator_name', Lang.RU)}:\nПроверим платёж.")
+    assert tg.sent[-1][:2] == (42, f"Проверим платёж.")
     # Asking for an operator again does not open a second escalation.
     asyncio.run(bot.on_operator_button(callback(chat, "op"), tg))
     assert chat.sent[-1][0] == t("with_operator", Lang.RU) and len(bot.handoffs.candidates()) == 1
@@ -1158,13 +1152,13 @@ def test_menu_screens_edit_one_message_in_place():
     assert chat.order == [menu] and chat.buttons() == [menu]
 
 
-def test_only_the_latest_answer_keeps_buttons():
+def test_answers_carry_no_buttons_and_clear_the_menu():
     bot, users = make_bot(FakeLLM(answer("Kartalarim bo'limiga kiring.", "uz_latn", topic="add_card")))
     chat = AppChat()
     asyncio.run(bot.on_start(app_msg(chat, "/start")))
     asyncio.run(bot.on_client_message(app_msg(chat, "Karta qo'shilmayapti"), chat))
     asyncio.run(bot.on_client_message(app_msg(chat, "Yana bir savol"), chat))
-    assert chat.buttons() == [chat.order[-1]] and len(chat.order) == 3
+    assert chat.buttons() == [] and len(chat.order) == 3
 
 
 def test_quick_question_turns_the_menu_into_the_question():
@@ -1176,11 +1170,8 @@ def test_quick_question_turns_the_menu_into_the_question():
     asyncio.run(bot.on_quick_question(chat.tap(menu, "q:add_card"), chat))
     q = quick_question("add_card")
     assert chat.messages[menu] == [f"{t('your_question', Lang.UZ_LATN)} {q.question[Lang.UZ_LATN]}", None]
-    assert len(chat.order) == 2 and chat.buttons() == [chat.order[-1]]
-    # "Menu" under the answer keeps the answer and sends the menu; the answer's buttons go away.
-    answer_id = chat.order[-1]
-    asyncio.run(bot.on_menu_button(chat.tap(answer_id, "menu")))
-    assert chat.messages[answer_id][0] == said("Kartalarim bo'limiga kiring.") and chat.buttons() == [chat.order[-1]]
+    assert len(chat.order) == 2 and chat.buttons() == []  # the answer reads like a person's message
+    assert chat.messages[chat.order[-1]][0] == said("Kartalarim bo'limiga kiring.")
 
 
 def test_ending_removes_answer_buttons_and_keeps_rating_buttons():
@@ -1249,7 +1240,7 @@ def test_menu_tree_topic_then_full_question_in_one_message():
     asyncio.run(bot.on_category(chat.tap(menu, "cat:registration")))
     asyncio.run(bot.on_quick_question(chat.tap(menu, "q:registration_problem"), chat))
     assert chat.messages[menu] == [f"{t('your_question', Lang.UZ_LATN)} Ro'yxatdan o'tishda muammo bo'ldi", None]
-    assert llm.calls[0][1] == "Ro'yxatdan o'tishda muammo bo'ldi" and chat.buttons() == [chat.order[-1]]
+    assert llm.calls[0][1] == "Ro'yxatdan o'tishda muammo bo'ldi" and chat.buttons() == []
 
 
 def test_unknown_topic_ignored():

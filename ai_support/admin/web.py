@@ -16,14 +16,12 @@ from pathlib import Path
 
 from aiohttp import ClientSession, ClientTimeout, web
 
-from ..channels.telegram_bot import _lang, end_keyboard
+from ..botapi import Call, telegram_call
 from ..guides import MAX_IMAGE_BYTES, GuideError
-from ..handoffs import HandoffStore
-from ..models import BotReply
 from ..operators import OperatorError
-from ..templates import t
 from .auth import telegram_user
 from .data import AdminData
+from .relay import send_to_client
 
 log = logging.getLogger(__name__)
 
@@ -35,8 +33,7 @@ ADMINS = web.AppKey("admins", frozenset)
 Fetch = Callable[[str], Awaitable[tuple[bytes, str]]]
 FETCH = web.AppKey("fetch", object)
 CACHE = web.AppKey("cache", OrderedDict)
-# (method, payload) -> result: the client bot's Bot API, to answer a client from the panel.
-Call = Callable[[str, dict], Awaitable[dict]]
+# The client bot's Bot API (botapi.Call), to answer a client from the panel.
 TELEGRAM = web.AppKey("telegram", object)
 SUPPORT_CHAT = web.AppKey("support_chat", object)
 MAX_REPLY = 4000
@@ -265,48 +262,14 @@ async def reply(request: web.Request) -> web.Response:
         return _json({"error": "unsupported_channel"}, 400)
     admin = request[ADMIN_USER]
     admin_id, name = str(admin["id"]), _admin_name(admin)
-    lang = _lang(target["language"])
-    call = request.app[TELEGRAM]
     try:
-        await call("sendMessage", {"chat_id": int(target["client_id"]), "text": f"{t('operator_name', lang)}:\n{text}",
-                                   "reply_markup": end_keyboard(lang).model_dump(exclude_none=True)})
+        session_id = await send_to_client(data, request.app[TELEGRAM], request.app[SUPPORT_CHAT], target, text,
+                                          admin_id, name)
     except Exception as e:  # blocked by the client, no token, network: nothing was sent, nothing is saved
         log.warning("admin reply to %s not sent: %s", target["client_id"], e)
         return _json({"error": "not_sent", "detail": str(e)}, 502)
-    handoff_id = await _support_copy(request.app, target, text, name)
-    session_id = data.record_admin_reply(target, handoff_id, text, admin_id, name)
     log.info("admin %s replied to client %s (session %s)", admin_id, target["client_id"], session_id)
     return _json({"ok": True, "session_id": session_id})
-
-
-async def _support_copy(app: web.Application, target: dict, text: str, admin_name: str) -> int | None:
-    """Show the admin's reply in the support chat, so operators see it and the client's answers come there.
-
-    A session without a hand-off gets one: the client's next messages go to the support chat, not the AI.
-    """
-    chat = app[SUPPORT_CHAT]
-    handoff = target["handoff"]
-    if chat is None:
-        return handoff.id if handoff else None
-    store: HandoffStore = app[DATA].handoffs
-    try:
-        if handoff is not None:
-            posted = await app[TELEGRAM]("sendMessage", {
-                "chat_id": int(handoff.support_chat_id), "reply_to_message_id": int(handoff.support_message_id),
-                "text": f"{admin_name} ответил клиенту из админ-панели:\n{text}"[:4096]})
-            store.link_post(handoff.id, handoff.support_chat_id, str(posted["message_id"]))
-            return handoff.id
-        posted = await app[TELEGRAM]("sendMessage", {
-            "chat_id": int(chat),
-            "text": (f"{admin_name} написал клиенту {target['client_name']} из админ-панели "
-                     f"(сессия #{target['session_id']}):\n{text}\n\n"
-                     "Ответы клиента придут сюда; ответьте реплаем, чтобы продолжить.")[:4096]})
-    except Exception as e:  # the client already has the reply; the support chat copy is extra
-        log.warning("support chat copy not posted: %s", e)
-        return handoff.id if handoff else None
-    note = BotReply(text, _lang(target["language"]), escalate=True, topic=target["topic"],
-                    escalation_reason="ответ из админ-панели", client_text=target["last_client_text"])
-    return store.open("telegram", target["client_id"], str(chat), str(posted["message_id"]), note)
 
 
 def _operator(op) -> dict:
@@ -336,25 +299,6 @@ async def clients(request: web.Request) -> web.Response:
 
 class MediaError(Exception):
     pass
-
-
-class TelegramError(Exception):
-    pass
-
-
-def telegram_call(bot_token: str) -> Call:
-    """Call a Bot API method as the client bot."""
-    async def call(method: str, payload: dict) -> dict:
-        if not bot_token:
-            raise TelegramError("no_token")
-        async with ClientSession(timeout=ClientTimeout(total=20)) as http:
-            async with http.post(f"https://api.telegram.org/bot{bot_token}/{method}", json=payload) as res:
-                body = await res.json()
-        if not body.get("ok"):
-            raise TelegramError(body.get("description") or "telegram_error")
-        return body["result"]
-
-    return call
 
 
 def telegram_fetch(bot_token: str) -> Fetch:

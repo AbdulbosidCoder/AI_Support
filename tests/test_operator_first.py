@@ -100,7 +100,7 @@ def test_new_conversation_goes_to_a_free_operator_not_the_model():
     client = Client(42)
     say(bot, tg, client, "Karta qo'shilmayapti")
     assert llm.calls == []
-    assert client.sent[-1] == f"{t('assistant_name', Lang.UZ_LATN)}:\n{t('connecting_operator', Lang.UZ_LATN)}"
+    assert client.sent[-1] == t('connecting_operator', Lang.UZ_LATN)
     post = tg.sent[-1]
     assert post.chat == SUPPORT and post.text.startswith("Dilnoza, новое обращение. Ответьте в течение 60 с")
     # No username: Telegram notifies the operator through a text mention at the start of the post.
@@ -118,7 +118,7 @@ def test_operator_answers_in_time_and_keeps_the_conversation():
     say(bot, tg, client, "Karta qo'shilmayapti")
     post = tg.sent[-1].id
     asyncio.run(bot.on_operator_reply(operator_reply("Qaysi karta?", post), tg))
-    assert tg.to(42)[-1] == f"{t('operator_name', Lang.UZ_LATN)}:\nQaysi karta?"
+    assert tg.to(42)[-1] == f"Qaysi karta?"
     assert asyncio.run(bot.expire_waits(tg, later())) == 0
     assert bot.handoffs.get(1).status == WITH_OPERATOR and llm.calls == []
 
@@ -131,10 +131,10 @@ def test_silent_operator_ai_greets_and_answers_what_the_client_asked():
     assert asyncio.run(bot.expire_waits(tg, later(30))) == 0  # not yet
     assert asyncio.run(bot.expire_waits(tg, later())) == 1
     assert bot.handoffs.get(1).status == WITH_AI
-    assert tg.to(42)[-1] == f"{t('assistant_name', Lang.UZ_LATN)}:\n{t('ai_takeover', Lang.UZ_LATN)}"
+    assert tg.to(42)[-1] == f"{t('ai_takeover', Lang.UZ_LATN)}"
     # The model answers everything the client wrote while waiting, in one go.
     assert llm.calls[-1][1] == "Karta qo'shilmayapti\nHumo karta"
-    assert client.sent[-1] == f"{t('assistant_name', Lang.UZ_LATN)}:\nKartalarim bo'limiga kiring."
+    assert client.sent[-1] == f"Kartalarim bo'limiga kiring."
     assert any(text.startswith("⏱ Dilnoza не ответил за 60 с") for text in tg.to(SUPPORT))
     # From now on the AI has the conversation and is rated for it.
     conversation = bot.feedback.conversation("telegram", "42")
@@ -152,7 +152,7 @@ def test_silent_operator_after_a_greeting_ai_asks_how_it_can_help():
     asyncio.run(bot.expire_waits(tg, later()))
     greeting = tg.sent[-1]
     assert greeting.chat == 42 and llm.calls == []
-    assert greeting.text == (f"{t('assistant_name', Lang.UZ_LATN)}:\n{t('ai_takeover', Lang.UZ_LATN)}\n\n"
+    assert greeting.text == (f"{t('ai_takeover', Lang.UZ_LATN)}\n\n"
                              f"{t('ai_how_help', Lang.UZ_LATN)}")
     assert greeting.markup.inline_keyboard  # the topics menu
     assert "Assalomu" not in t("ai_takeover", Lang.UZ_LATN)  # the client was greeted on /start already
@@ -165,7 +165,7 @@ def test_all_operators_busy_ai_greets_at_once():
     posts = len(tg.to(SUPPORT))
     say(bot, tg, second, "To'lov o'tmadi")
     assert len(tg.to(SUPPORT)) == posts  # nobody to connect: no post
-    assert tg.to(43)[-1] == f"{t('assistant_name', Lang.UZ_LATN)}:\n{t('ai_takeover', Lang.UZ_LATN)}"
+    assert tg.to(43)[-1] == f"{t('ai_takeover', Lang.UZ_LATN)}"
     assert llm.calls[-1][1] == "To'lov o'tmadi" and second.sent[-1].endswith("Kartalarim bo'limiga kiring.")
     # The next message continues with the AI, without a second greeting.
     say(bot, tg, second, "Yana")
@@ -196,7 +196,7 @@ def test_late_operator_reply_takes_the_conversation_back_from_the_ai():
     post = tg.sent[-1].id
     asyncio.run(bot.expire_waits(tg, later()))
     asyncio.run(bot.on_operator_reply(operator_reply("Kechirasiz, men shu yerdaman.", post), tg))
-    assert tg.to(42)[-1] == f"{t('operator_name', Lang.UZ_LATN)}:\nKechirasiz, men shu yerdaman."
+    assert tg.to(42)[-1] == f"Kechirasiz, men shu yerdaman."
     assert bot.handoffs.get(1).status == WITH_OPERATOR
     calls = len(llm.calls)
     say(bot, tg, client, "Humo karta")
@@ -265,7 +265,7 @@ def test_forbidden_answer_replaced_after_ai_takeover(bad):
     say(bot, tg, client, "Pulim qachon qaytadi?")
     asyncio.run(bot.expire_waits(tg, later()))
     assert all(bad not in text for text in client.sent + tg.to(42))
-    assert client.sent[-1].startswith(f"{t('assistant_name', Lang.UZ_LATN)}:\n{t('guardrail', Lang.UZ_LATN)}")
+    assert client.sent[-1].startswith(f"{t('guardrail', Lang.UZ_LATN)}")
 
 
 @pytest.mark.parametrize("key", ["connecting_operator", "ai_takeover", "ai_how_help"])
@@ -320,7 +320,8 @@ def test_settings_from_env(monkeypatch):
     s = Settings.from_env()
     assert (s.operator_first, s.operator_wait_seconds, s.operator_max_sessions) == (False, 90, 2)
     monkeypatch.delenv("OPERATOR_FIRST")
-    assert Settings.from_env().operator_first and Settings().operator_wait_seconds == 60
+    # By default the AI answers everything; OPERATOR_FIRST=1 turns operator-first on.
+    assert not Settings.from_env().operator_first and Settings().operator_wait_seconds == 60
 
 
 def test_mention_counts_utf16_for_names_with_emoji():
