@@ -16,7 +16,7 @@ from ai_support.engine import SupportEngine
 from ai_support.feedback import FeedbackStore
 from ai_support.handoffs import HandoffStore
 from ai_support.models import BotReply, Lang
-from ai_support.operators import OperatorError, OperatorStore
+from ai_support.operators import OperatorError, OperatorStore, to_phone
 from ai_support.users import UserStore
 from fakes import FakeLLM, FakeSTT
 
@@ -310,7 +310,7 @@ def test_only_listed_operators_reach_the_client():
     tg = FakeTgBot()
     stranger = FakeMessage("Salom", -100, 11, reply_to=NS(message_id=55))
     asyncio.run(bot.on_operator_reply(stranger, tg))
-    assert tg.sent == [] and stranger.answers == [NOT_OPERATOR]
+    assert tg.sent == [] and stranger.answers == [NOT_OPERATOR.format(id=11)]
     operator = FakeMessage("Tekshiryapmiz", -100, 10, reply_to=NS(message_id=55))
     asyncio.run(bot.on_operator_reply(operator, tg))
     client, text = tg.sent[0]
@@ -520,3 +520,45 @@ def test_admin_reply_not_saved_when_telegram_refuses(tmp_path):
                            ("POST", f"/api/sessions/{conv.id}/reply", ADMIN, {"text": "Проверим"}))
     assert missing[0] == 404 and refused[0] == 502 and refused[1]["error"] == "not_sent"
     assert log.for_client("telegram", "8") == []
+
+
+def test_admin_answers_clients_without_being_an_operator():
+    bot, _ = support_bot()
+    bot.settings = Settings(support_chat_id=-100, admin_ids=frozenset({12}))
+    bot.operators.add(10, "Ali")
+    tg = FakeTgBot()
+    admin = FakeMessage("Tekshiryapmiz", -100, 12, reply_to=NS(message_id=55))
+    asyncio.run(bot.on_operator_reply(admin, tg))
+    assert tg.sent and str(tg.sent[0][0]) == "7" and admin.answers == []
+
+
+def test_local_phone_formats_are_phones():
+    for value in ("90 123 45 67", "(90) 123-45-67", "90-123-45-67", "901234567", "+998 90 123 45 67", "998901234567"):
+        assert to_phone(value) == "+998901234567", value
+    for value in ("123456789", "10", "1234567890", "@ali", "Ali", ""):
+        assert to_phone(value) is None, value
+    assert parse_operator("90 123 45 67 Vali") == ("+998901234567", "Vali")
+    assert parse_operator("901234567 Vali") == ("901234567", "Vali")  # may be an id: add_operator decides
+
+
+def test_operator_added_by_local_number_links_a_registered_client(tmp_path):
+    data = AdminData(tmp_path / "db.sqlite3")
+    data.users.touch("telegram", "555", "555", "vali", "Vali Valiyev")
+    data.users.set_phone("telegram", "555", "+998 90 123 45 67")
+    op = data.add_operator("90 123 45 67", "")
+    assert op.linked and op.user_id == "555" and op.phone == "+998901234567"
+    assert data.operators.may_answer(555)
+
+
+def test_nine_digit_id_of_a_registered_client_stays_an_id(tmp_path):
+    data = AdminData(tmp_path / "db.sqlite3")
+    data.users.touch("telegram", "901234567", "901234567", "ali", "Ali")
+    op = data.add_operator("901234567", "Ali")
+    assert op.user_id == "901234567" and op.phone is None
+    assert data.add_operator("931112233", "Vali").phone == "+998931112233"
+
+
+def test_operator_from_a_shared_contact_is_linked_at_once(tmp_path):
+    data = AdminData(tmp_path / "db.sqlite3")
+    op = data.add_operator("998901234567", "Vali", user_id=777)
+    assert op.linked and op.user_id == "777" and data.operators.may_answer(777)

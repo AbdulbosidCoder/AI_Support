@@ -210,16 +210,21 @@ class AdminData:
     # --- operators ---------------------------------------------------------------------------
 
     def add_operator(self, value: str, name: str = "", username: str | None = None,
-                     added_by: str | None = None) -> Operator:
+                     added_by: str | None = None, user_id: int | str | None = None) -> Operator:
         """Add an operator by phone number or Telegram id.
 
         By phone: if a client already registered with that number, they become the operator now;
         otherwise when they press /start in the client bot and share that number.
         """
         value = (value or "").strip()
-        if not is_phone(value):
+        # A registered client's Telegram id is never mistaken for a local phone number.
+        known_id = value.isdigit() and self._one("SELECT 1 FROM users WHERE user_id = ?", (value,)) is not None
+        if known_id or not is_phone(value):
             return self.operators.add(value, name, username, added_by)
         op = self.operators.add_phone(value, name, added_by)
+        if user_id:
+            # Shared as a Telegram contact: its account is known, no need to wait for the registration.
+            return self.operators.link(op.phone, user_id, username, name or None) or op
         row = self._one("SELECT user_id, username, full_name FROM users WHERE phone = ? ORDER BY updated_at DESC LIMIT 1",
                         (op.phone,)) if "phone" in self._user_columns() else None
         if row is not None:

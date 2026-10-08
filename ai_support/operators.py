@@ -71,13 +71,32 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def is_phone(value: str) -> bool:
-    """'+998 90 123-45-67' or '998901234567' is a phone; a Telegram id is shorter digits without '+'."""
+# Uzbek numbers written without the country code: 9 digits starting with an operator or city code.
+UZ_COUNTRY = "998"
+UZ_CODES = {"20", "33", "50", "55", "71", "77", "88", "90", "91", "93", "94", "95", "97", "98", "99"}
+
+
+def to_phone(value: str) -> str | None:
+    """A phone number as the client bot stores it (+digits), or None if `value` is not one (a Telegram id).
+
+    '+998 90 123-45-67', '998901234567', '90 123 45 67', '(90) 123-45-67' and '901234567' are phones; the
+    local ones get the Uzbek country code. Plain digits otherwise are a Telegram id ('123456789').
+    """
     value = (value or "").strip()
     digits = "".join(ch for ch in value if ch.isdigit())
+    if not digits or any(ch not in "+0123456789 -()" for ch in value):
+        return None
     if value.startswith("+"):
-        return len(digits) >= MIN_PHONE_DIGITS
-    return digits == value.replace(" ", "") and digits.startswith("998") and len(digits) == 12
+        return f"+{digits}" if len(digits) >= MIN_PHONE_DIGITS else None
+    if len(digits) == 12 and digits.startswith(UZ_COUNTRY):
+        return f"+{digits}"
+    if len(digits) == 9 and (digits[:2] in UZ_CODES or not value.isdigit()):
+        return f"+{UZ_COUNTRY}{digits}"
+    return None
+
+
+def is_phone(value: str) -> bool:
+    return to_phone(value) is not None
 
 
 class OperatorStore:
@@ -124,7 +143,7 @@ class OperatorStore:
 
     def add_phone(self, phone: str, name: str = "", added_by: str | None = None) -> Operator:
         """Add an operator by phone number; they become active for clients once they register in the bot."""
-        number = normalize_phone(phone or "")
+        number = to_phone(phone or "") or normalize_phone(phone or "")
         if len(number) - 1 < MIN_PHONE_DIGITS:
             raise OperatorError("bad_phone")
         name = (name or "").strip() or number
@@ -190,7 +209,7 @@ class OperatorStore:
             args.append(name.strip())
         number = op.phone
         if phone is not None:
-            number = normalize_phone(phone) if phone.strip() else None
+            number = (to_phone(phone) or normalize_phone(phone)) if phone.strip() else None
             if number is None and not op.linked:
                 raise OperatorError("bad_phone")  # an unregistered operator is known only by phone
             if number is not None and len(number) - 1 < MIN_PHONE_DIGITS:
@@ -225,7 +244,7 @@ class OperatorStore:
     @staticmethod
     def _where(key: str | int) -> tuple[str, str]:
         key = str(key).strip()
-        return ("phone", normalize_phone(key)) if key.startswith("+") else ("user_id", key)
+        return ("phone", to_phone(key) or normalize_phone(key)) if key.startswith("+") else ("user_id", key)
 
     def all(self) -> list[Operator]:
         with self._lock:
