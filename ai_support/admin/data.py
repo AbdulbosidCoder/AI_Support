@@ -293,6 +293,35 @@ class AdminData:
             messages = self._from_handoff(r["handoff_id"])
         return {**self._session_row(r, self._client_names()), "messages": messages}
 
+    def reply_target(self, session_id: int) -> dict | None:
+        """Where an admin's reply to this session goes: the client, the hand-off and the last client question."""
+        r = self._one("SELECT * FROM conversations WHERE id = ?", (session_id,))
+        if r is None:
+            return None
+        names = self._client_names().get((r["channel"], r["client_id"]), {})
+        last = self._one("""SELECT text FROM chat_messages WHERE channel = ? AND client_id = ? AND sender = 'client'
+                            ORDER BY id DESC LIMIT 1""", (r["channel"], r["client_id"]))
+        return {
+            "session_id": r["id"], "channel": r["channel"], "client_id": r["client_id"],
+            "client_name": names.get("full_name") or names.get("username") or r["client_id"], "language": r["language"], "topic": r["topic"] or "",
+            "status": r["status"], "handoff": self.handoffs.get(r["handoff_id"]) if r["handoff_id"] else None,
+            "last_client_text": last["text"] if last else "",
+        }
+
+    def record_admin_reply(self, target: dict, handoff_id: int | None, text: str, admin_id: str,
+                           admin_name: str) -> int:
+        """Save an admin's reply sent from the panel like an operator's; returns the session it belongs to."""
+        channel, client_id = target["channel"], target["client_id"]
+        if handoff_id is not None:
+            # The conversation is with a person now: the AI does not take it over.
+            self.handoffs.claim(handoff_id, admin_id, admin_name)
+        conv = self.feedback.operator_replied(channel, client_id, handoff_id, target["language"], admin_id, admin_name)
+        self.chatlog.add(channel, client_id, OPERATOR, text, operator_id=admin_id, operator_name=admin_name,
+                         handoff_id=handoff_id, conversation_id=conv.id)
+        if handoff_id is not None:
+            self.handoffs.add_operator_reply(handoff_id, text, admin_id, admin_name)
+        return conv.id
+
     def _window(self, channel: str, client_id: str, after: str | None, until: str | None) -> list[dict]:
         """Messages saved without a conversation id: the client's messages between two conversation ends."""
         where, args = ["channel = ?", "client_id = ?"], [channel, client_id]

@@ -416,3 +416,107 @@ def test_panel_shows_who_a_new_conversation_waits_for_and_busy_operators(tmp_pat
     assert data.operator_list()[0]["busy"] == 1
     handoffs.close_handoff(hid)
     assert data.operator_list()[0]["busy"] == 0
+
+
+def test_operator_store_edits_and_deletes():
+    ops = OperatorStore(":memory:")
+    ops.add_phone("+998901234567", "Ali")
+    ops.add(5, "Vali")
+    op = ops.update("+998901234567", name="Ali Valiyev", phone="+998 90 765 43 21")
+    assert (op.name, op.phone, op.key) == ("Ali Valiyev", "+998907654321", "+998907654321")
+    assert ops.get("+998901234567") is None
+    assert ops.update("5", phone="+998901111111").phone == "+998901111111"
+    for bad in ({"phone": "+998 90 765 43 21"}, {"phone": "12"}, {"name": " "}):
+        try:
+            ops.update("5", **bad)
+        except OperatorError as e:
+            assert str(e) in ("phone_taken", "bad_phone", "bad_name")
+        else:
+            raise AssertionError(bad)
+    ops.delete("5")
+    assert ops.get("5") is None and [o.name for o in ops.all()] == ["Ali Valiyev"]
+    try:
+        ops.delete("5")
+    except OperatorError as e:
+        assert str(e) == "not_found"
+
+
+def test_operators_edited_and_deleted_from_panel(tmp_path):
+    data = AdminData(tmp_path / "db.sqlite3")
+    data.add_operator("+998901234567", "Ali")
+    app = create_app(data, TOKEN, frozenset({ADMIN}))
+    edited, taken, deleted, gone, stranger = api(
+        app, ("PATCH", "/api/operators/+998901234567", ADMIN, {"name": "Ali V", "phone": "+998907654321"}),
+        ("PATCH", "/api/operators/+998907654321", ADMIN, {"phone": "1"}),
+        ("DELETE", "/api/operators/+998907654321", ADMIN, None),
+        ("DELETE", "/api/operators/+998907654321", ADMIN, None),
+        ("DELETE", "/api/operators/+998907654321", 7, None))
+    assert edited[0] == 200 and edited[1]["name"] == "Ali V" and edited[1]["key"] == "+998907654321"
+    assert taken == (400, {"error": "bad_phone"})
+    assert deleted == (200, {"ok": True}) and gone[0] == 404 and stranger[0] == 403
+    assert data.operator_list() == []
+
+
+class FakeTelegram:
+    def __init__(self, fail=False):
+        self.calls, self.fail, self.next_id = [], fail, 500
+
+    async def __call__(self, method, payload):
+        if self.fail:
+            raise RuntimeError("Forbidden: bot was blocked by the user")
+        self.calls.append((method, payload))
+        self.next_id += 1
+        return {"message_id": self.next_id}
+
+
+def test_admin_answers_a_session_from_the_panel(tmp_path):
+    db = tmp_path / "bot.sqlite3"
+    users, handoffs, feedback, log = stores(db)
+    users.touch("telegram", "7", "7", "anvar", "Anvar")
+    reply = BotReply("Operatorga uzatdim", Lang.UZ_LATN, escalate=True, topic="refund", client_text="Pul qaytmadi")
+    hid = handoffs.open("telegram", "7", "-100", "55", reply)
+    handoffs.assign(hid, "10", "Ali", wait_seconds=60)
+    conv = feedback.escalated("telegram", "7", hid, "uz_latn", "refund")
+    tg = FakeTelegram()
+    app = create_app(AdminData(db), TOKEN, frozenset({ADMIN}), support_chat_id=-100, telegram=tg)
+    sent, empty = api(app, ("POST", f"/api/sessions/{conv.id}/reply", ADMIN, {"text": "Tekshiryapmiz"}),
+                      ("POST", f"/api/sessions/{conv.id}/reply", ADMIN, {"text": "  "}))
+    assert sent == (200, {"ok": True, "session_id": conv.id}) and empty[0] == 400
+    (m1, to_client), (m2, copy) = tg.calls
+    assert to_client["chat_id"] == 7 and to_client["text"].endswith(":\nTekshiryapmiz")
+    assert to_client["reply_markup"]["inline_keyboard"][0][0]["callback_data"] == "end"
+    assert copy["chat_id"] == -100 and copy["reply_to_message_id"] == 55 and "Tekshiryapmiz" in copy["text"]
+    # The operator's replies to the copy reach the same client; the AI no longer takes the case over.
+    assert handoffs.find("-100", "502").id == hid and handoffs.due() == []
+    data = AdminData(db)
+    msgs = data.session(conv.id)["messages"]
+    assert (msgs[-1]["sender"], msgs[-1]["text"], msgs[-1]["operator_name"]) == ("operator", "Tekshiryapmiz", "Admin")
+    assert handoffs.operator_replies(hid) == ["Tekshiryapmiz"]
+
+
+def test_admin_reply_to_bot_session_opens_a_handoff(tmp_path):
+    db = tmp_path / "bot.sqlite3"
+    users, handoffs, feedback, log = stores(db)
+    conv = feedback.bot_answered("telegram", "8", "ru", "cards")
+    log.add("telegram", "8", "client", "Карта не добавляется", conversation_id=conv.id)
+    tg = FakeTelegram()
+    app = create_app(AdminData(db), TOKEN, frozenset({ADMIN}), support_chat_id=-100, telegram=tg)
+    (status, body), = api(app, ("POST", f"/api/sessions/{conv.id}/reply", ADMIN, {"text": "Проверим"}))
+    assert status == 200 and body["session_id"] == conv.id
+    from ai_support.templates import t
+    assert tg.calls[0][1]["text"] == f"{t('operator_name', Lang.RU)}:\nПроверим"  # the client's language
+    h = handoffs.find("-100", "502")
+    assert h is not None and h.client_chat_id == "8" and h.client_text == "Карта не добавляется"
+    # The client's next messages go to the support chat: the conversation has the hand-off now.
+    assert feedback.conversation("telegram", "8").handoff_id == h.id
+
+
+def test_admin_reply_not_saved_when_telegram_refuses(tmp_path):
+    db = tmp_path / "bot.sqlite3"
+    users, handoffs, feedback, log = stores(db)
+    conv = feedback.bot_answered("telegram", "8", "ru", "cards")
+    app = create_app(AdminData(db), TOKEN, frozenset({ADMIN}), telegram=FakeTelegram(fail=True))
+    missing, refused = api(app, ("POST", "/api/sessions/999/reply", ADMIN, {"text": "x"}),
+                           ("POST", f"/api/sessions/{conv.id}/reply", ADMIN, {"text": "Проверим"}))
+    assert missing[0] == 404 and refused[0] == 502 and refused[1]["error"] == "not_sent"
+    assert log.for_client("telegram", "8") == []
