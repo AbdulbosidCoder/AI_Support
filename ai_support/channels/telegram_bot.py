@@ -112,7 +112,9 @@ OPERATOR_LINKED = ("Вы подключены как оператор подде
                    "посты бота в чате поддержки — ваши ответы будут доходить до клиентов.")
 NEW_CONVERSATION_REASON = "новое обращение: сначала оператор"
 NOT_OPERATOR = ("Ответ не отправлен клиенту: вас нет в списке операторов. "
-                "Попросите администратора добавить вас в админ-боте.")
+                "Попросите администратора добавить вас в админ-боте по номеру телефона или по Telegram id: {id}. "
+                "Если вас добавили по номеру, откройте этого бота в личных сообщениях, нажмите /start "
+                "и поделитесь тем же номером.")
 
 
 def language_keyboard() -> InlineKeyboardMarkup:
@@ -975,8 +977,9 @@ class TelegramSupportBot:
         if handoff is None or not text:
             return
         u = message.from_user
-        if not self.operators.may_answer(u.id if u else None):
-            await message.answer(NOT_OPERATOR)
+        # Admins (ADMIN_IDS) always reach the client; everyone else only once an admin added them.
+        if not (u and u.id in self.settings.admin_ids) and not self.operators.may_answer(u.id if u else None):
+            await message.answer(NOT_OPERATOR.format(id=u.id if u else "-"))
             return
         lang = _lang(handoff.language)
         await self._push_buttons(bot, handoff.client_chat_id, f"{t('operator_name', lang)}:\n{text}",

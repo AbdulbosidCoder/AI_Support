@@ -21,13 +21,13 @@ from aiogram.types import (
 )
 
 from ..config import Settings
-from ..operators import OperatorError, is_phone
+from ..operators import OperatorError, to_phone
 from .data import AdminData, render_overview
 
 log = logging.getLogger(__name__)
 
 ADD_HELP = ("Чтобы добавить оператора, отправьте его номер телефона и имя:\n"
-            "<code>+998901234567 Имя Фамилия</code>\n"
+            "<code>+998901234567 Имя Фамилия</code> (можно и <code>90 123 45 67 Имя</code>)\n"
             "или поделитесь его контактом.\n\n"
             "Оператор открывает клиентский бот, нажимает /start и при регистрации делится этим номером — "
             "бот сам запомнит его Telegram id. Если он уже зарегистрирован в боте, он станет оператором сразу.\n\n"
@@ -69,8 +69,10 @@ def parse_operator(text: str) -> tuple[str, str] | None:
     digits = "".join(ch for ch in head if ch.isdigit())
     if not digits:
         return None
-    if is_phone(head) or is_phone(digits):
-        return "+" + digits, name
+    phone = to_phone(head)
+    if phone is not None:
+        # 9 plain digits may also be a Telegram id: AdminData.add_operator checks the registered clients.
+        return (head if head.isdigit() and len(head) == 9 else phone), name
     first, _, rest = head.partition(" ")
     if not first.isdigit():
         return None
@@ -165,7 +167,8 @@ class AdminBot:
         if message.contact is not None:
             c = message.contact
             name = " ".join(x for x in (c.first_name, c.last_name) if x)
-            await self._add(message, c.phone_number, name, None)
+            # A contact from Telegram carries the account id: the operator is linked at once.
+            await self._add(message, c.phone_number, name, None, user_id=c.user_id)
             return
         origin = message.forward_origin
         if origin is not None:
@@ -185,9 +188,10 @@ class AdminBot:
             return
         await self._add(message, parsed[0], parsed[1], None)
 
-    async def _add(self, message: Message, value: str, name: str, username: str | None) -> None:
+    async def _add(self, message: Message, value: str, name: str, username: str | None,
+                   user_id: int | None = None) -> None:
         try:
-            op = self.data.add_operator(value, name, username, added_by=str(message.from_user.id))
+            op = self.data.add_operator(value, name, username, added_by=str(message.from_user.id), user_id=user_id)
         except OperatorError:
             await message.answer(ADD_HELP, parse_mode="HTML")
             return
