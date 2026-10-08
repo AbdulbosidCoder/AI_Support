@@ -63,3 +63,5 @@ class BotReply:
     show_menu: bool = False
     # Instruction videos for the answer's topic (see ai_support/videos.py), sent after the text.
     videos: list[VideoAttachment] = field(default_factory=list)
+    # For the support team's log only, never shown to the client (e.g. why a voice message was not recognised).
+    note: str = ""
