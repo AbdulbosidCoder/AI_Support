@@ -52,7 +52,7 @@ CREATE TABLE IF NOT EXISTS conversations (
     topic         TEXT,
     opened_at     TEXT NOT NULL,
     closed_at     TEXT,
-    closed_by     TEXT                    -- 'client' | 'operator'
+    closed_by     TEXT                    -- 'client' | 'operator' | 'timeout'
 );
 CREATE TABLE IF NOT EXISTS client_assessments (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -69,6 +69,7 @@ CREATE TABLE IF NOT EXISTS client_assessments (
 """
 
 BOT, OPERATOR = "bot", "operator"
+TIMEOUT = "timeout"  # closed_by: nobody wrote in the conversation for a while
 OPEN, RATED, EXPIRED, CLOSED = "open", "rated", "expired", "closed"
 NO_ANSWER, NOT_HELPED = "no_answer", "not_helped"
 TONES = ("polite", "calm", "rude")
@@ -104,6 +105,7 @@ class Conversation:
     operator_name: str | None
     language: str
     topic: str
+    opened_at: str = ""
 
     @property
     def target(self) -> str:
@@ -182,6 +184,13 @@ class FeedbackStore:
                 "SELECT * FROM conversations WHERE handoff_id = ? AND status = ? ORDER BY id DESC LIMIT 1",
                 (handoff_id, OPEN)).fetchone()
         return _conversation(row) if row else None
+
+    def open_conversations(self, channel: str) -> list[Conversation]:
+        """Every open conversation of the channel, oldest first."""
+        with self._lock:
+            rows = self._db.execute("SELECT * FROM conversations WHERE channel = ? AND status = ? ORDER BY id",
+                                    (channel, OPEN)).fetchall()
+        return [_conversation(r) for r in rows]
 
     def bot_answered(self, channel: str, client_id: str, language: str, topic: str = "") -> Conversation:
         """The bot answered: open a conversation, or keep the open one (a hand-off stays a hand-off)."""
@@ -447,7 +456,7 @@ def render_assessment(source: str, a: Assessment, level: Level | None = None) ->
 
 def _conversation(row: sqlite3.Row) -> Conversation:
     return Conversation(row["id"], row["channel"], row["client_id"], row["handoff_id"], row["operator_id"],
-                        row["operator_name"], row["language"], row["topic"] or "")
+                        row["operator_name"], row["language"], row["topic"] or "", row["opened_at"])
 
 
 def _request(row: sqlite3.Row) -> RatingRequest:

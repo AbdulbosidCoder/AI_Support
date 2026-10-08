@@ -91,6 +91,14 @@ class ChatLog:
                                     (conversation_id,)).fetchall()
         return [_message(r) for r in rows]
 
+    def last_at(self, channel: str, client_id: str) -> str | None:
+        """When anything was last written in the client's chat (client, bot or operator), or None."""
+        with self._lock:
+            row = self._db.execute(
+                "SELECT MAX(created_at) FROM chat_messages WHERE channel = ? AND client_id = ? AND sender != ?",
+                (channel, client_id, SYSTEM)).fetchone()
+        return row[0]
+
     def for_client(self, channel: str, client_id: str, limit: int = 500) -> list[ChatMessage]:
         """The client's latest messages, oldest first."""
         with self._lock:
