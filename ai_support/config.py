@@ -17,7 +17,10 @@ class Settings:
     claude_effort: str = "medium"
     stt_api_url: str = "https://api.openai.com/v1/audio/transcriptions"
     stt_api_key: str = ""
-    stt_model: str = "whisper-1"
+    # gpt-4o-transcribe recognises Uzbek far better than whisper-1.
+    stt_model: str = "gpt-4o-transcribe"
+    # Send the client's language (and a prompt in it) with each voice message; off: the service guesses.
+    stt_language_hint: bool = True
     kb_dir: Path = ROOT / "data" / "knowledge_base"
     history_turns: int = 6
     # SQLite file with registered clients and their chosen language.
@@ -52,6 +55,7 @@ class Settings:
             stt_api_url=os.getenv("STT_API_URL", cls.stt_api_url),
             stt_api_key=os.getenv("STT_API_KEY", ""),
             stt_model=os.getenv("STT_MODEL", cls.stt_model),
+            stt_language_hint=os.getenv("STT_LANGUAGE_HINT", "1").strip().lower() not in ("0", "false", "no", "off"),
             kb_dir=Path(os.getenv("KB_DIR", str(cls.kb_dir))),
             history_turns=int(os.getenv("HISTORY_TURNS", cls.history_turns)),
             db_path=Path(os.getenv("DB_PATH", str(cls.db_path))),

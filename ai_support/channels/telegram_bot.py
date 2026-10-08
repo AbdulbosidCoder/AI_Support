@@ -718,6 +718,7 @@ class TelegramSupportBot:
             return
         await bot.send_chat_action(first.chat.id, ChatAction.TYPING)
         msg = await self.to_incoming(messages, bot)
+        msg.language = user.language if user else None
         reply = await self.engine.handle(msg)
         await self._deliver(first, bot, reply, client_kind=message_kind(first), files=media_files(messages))
         if opens_conversation(reply):

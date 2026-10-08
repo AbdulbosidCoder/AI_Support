@@ -20,7 +20,8 @@ def build_engine(settings: Settings, handoffs: HandoffStore | None = None) -> Su
     kb = load_knowledge(settings, handoffs)
     llm = ClaudeSupportLLM(build_system_prompt(kb), reply_schema(kb), settings.claude_model, settings.claude_effort)
     stt: SpeechToText = (
-        WhisperHTTPSTT(settings.stt_api_url, settings.stt_api_key, settings.stt_model)
+        WhisperHTTPSTT(settings.stt_api_url, settings.stt_api_key, settings.stt_model,
+                       language_hint=settings.stt_language_hint)
         if settings.stt_api_key else DisabledSTT()
     )
     return SupportEngine(llm, stt, ConversationStore(settings.history_turns), kb.videos)
