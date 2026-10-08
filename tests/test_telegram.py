@@ -83,7 +83,7 @@ def test_reply_to_other_chat_image_ignored():
 
 from aiogram.types import InlineKeyboardMarkup, ReplyKeyboardMarkup, ReplyKeyboardRemove
 
-from ai_support.menu import CHOOSE_LANGUAGE, END_LABEL, OPERATOR_LABEL, QUICK_QUESTIONS, SETTINGS_LABEL, CATEGORIES, quick_question
+from ai_support.menu import CHOOSE_LANGUAGE, END_LABEL, MENU_LABEL, OPERATOR_LABEL, QUICK_QUESTIONS, SETTINGS_LABEL, CATEGORIES, quick_question
 from ai_support.models import BotReply, Lang
 from ai_support.templates import t
 from ai_support.users import UserStore
@@ -134,6 +134,14 @@ def said(text, lang=Lang.UZ_LATN):
     return text  # answers are plain chat messages, with no signature
 
 
+def is_mini_menu(kb, lang=None):
+    """No inline buttons under an answer, only the mini menu under the message field."""
+    if not isinstance(kb, ReplyKeyboardMarkup):
+        return False
+    labels = [b.text for row in kb.keyboard for b in row]
+    return lang is None or labels == [END_LABEL[lang], MENU_LABEL[lang]]
+
+
 def make_bot(llm=None, register=True):
     users = registered() if register else UserStore(":memory:")
     return TelegramSupportBot(Settings(), SupportEngine(llm or FakeLLM(), FakeSTT()), users), users
@@ -172,7 +180,8 @@ def test_choosing_language_then_sharing_phone_registers_and_shows_menu():
     u = users.get("telegram", "42")
     assert u.phone == "+998901234567" and u.registered_at
     (done, remove), (welcome, menu) = chat.sent[-2:]
-    assert done == t("registered", Lang.RU) and isinstance(remove, ReplyKeyboardRemove)
+    # The phone button gives way to the mini menu: end the conversation or open the menu.
+    assert done == t("registered", Lang.RU) and is_mini_menu(remove, Lang.RU)
     assert t("welcome", Lang.RU) in welcome and isinstance(menu, InlineKeyboardMarkup)
     data = [b.callback_data for row in menu.inline_keyboard for b in row]
     assert data == [f"cat:{c.id}" for c in CATEGORIES] + ["op", "settings", "end"]
@@ -249,7 +258,7 @@ def test_quick_question_asked_in_chosen_language():
     assert llm.calls[0][1] == q.question[Lang.UZ_CYRL]
     (asked, _), (text, kb) = chat.sent[-2:]
     assert asked == f"{t('your_question', Lang.UZ_CYRL)} {q.question[Lang.UZ_CYRL]}"
-    assert text == said("Javob", Lang.UZ_CYRL) and kb is None  # a plain chat message, no buttons
+    assert text == said("Javob", Lang.UZ_CYRL) and is_mini_menu(kb)  # a plain chat message, no buttons
 
 
 def test_quick_question_forbidden_answer_replaced():
@@ -281,7 +290,7 @@ def test_after_operator_request_the_ai_answers_first_then_a_specialist_if_asked_
     assert chat.sent[-1][0] == t("operator_ai_first", Lang.EN) and not llm.calls
     asyncio.run(bot.on_client_message(client_msg(chat, "How do I add a card?"), chat))
     text, kb = chat.sent[-1]
-    assert llm.calls and text == said("Open «Kartalarim» and tap «+».", Lang.EN) and kb is None
+    assert llm.calls and text == said("Open «Kartalarim» and tap «+».", Lang.EN) and is_mini_menu(kb)
     # The answer did not help and the client asks again: now they go to a specialist.
     asyncio.run(bot.on_client_message(client_msg(chat, "operator kerak"), chat))
     assert chat.sent[-1][0] == said(t("handoff", Lang.EN), Lang.EN) and len(llm.calls) == 1
@@ -296,7 +305,7 @@ def test_after_operator_request_a_question_the_ai_cannot_answer_goes_to_a_specia
     asyncio.run(bot.on_operator_button(callback(chat, "op"), chat))
     asyncio.run(bot.on_client_message(client_msg(chat, "My salary card shows a strange fee"), chat))
     text, kb = chat.sent[-1]
-    assert llm.calls and t("handoff", Lang.EN) in text and kb is None
+    assert llm.calls and t("handoff", Lang.EN) in text and is_mini_menu(kb)
     assert bot.feedback.conversation("telegram", "42").handoff_id is None  # no support chat in this test
 
 
@@ -336,7 +345,7 @@ def test_mini_menu_button_asks_question_in_chosen_language():
     assert llm.calls[0][1] == q.question[Lang.RU]
     assert chat.sent[-2][0] == f"{t('your_question', Lang.RU)} {q.question[Lang.RU]}"
     text, kb = chat.sent[-1]
-    assert text == said("Kartalarim bo'limiga kiring.", Lang.UZ_LATN) and kb is None
+    assert text == said("Kartalarim bo'limiga kiring.", Lang.UZ_LATN) and is_mini_menu(kb)
 
 
 def test_mini_menu_forbidden_answer_replaced():
@@ -613,7 +622,7 @@ def answered(llm=None):
 def test_answer_is_a_plain_message_and_asks_no_rating_yet():
     bot, feedback, llm, chat, tg = answered()
     text, kb = chat.sent[-1]
-    assert text == said("Kartalarim bo'limiga kiring.") and kb is None
+    assert text == said("Kartalarim bo'limiga kiring.") and is_mini_menu(kb)
     assert tg.sent == [] and feedback.score().count == 0  # no rating request after an answer
 
 
@@ -685,7 +694,8 @@ def test_escalation_carries_ai_assessment_level_and_buttons_for_support_only():
     assert [b.callback_data for b in kb.inline_keyboard[1]] == ["hnote", "hend"]
     assert "Телефон: +998901234567" in summary
     # The client sees only the hand-off as a plain message, nothing about the assessment.
-    assert chat.sent == [(said("Передаю специалисту.\n\n" + t("handoff", Lang.RU), Lang.RU), None)]
+    assert [text for text, _ in chat.sent] == [said("Передаю специалисту.\n\n" + t("handoff", Lang.RU), Lang.RU)]
+    assert is_mini_menu(chat.sent[-1][1])
 
 
 def escalated_with_feedback(llm=None):

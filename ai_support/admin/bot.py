@@ -181,11 +181,15 @@ def dialog_text(data: AdminData, client_id: str) -> str:
     return text if len(text) <= 4096 else "…" + text[-4000:]
 
 
-def dialog_keyboard(client_id: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Завершить разговор", callback_data=f"a:close:{client_id}")],
-        [InlineKeyboardButton(text="⬅️ К списку клиентов", callback_data="a:sup")],
-    ])
+# The staff member's mini menu under the message field while they chat with a client: always at hand,
+# however many messages the dialog has.
+END_TEXT = "✅ Suhbatni yakunlash"
+LIST_TEXT = "🎧 Mijozlar"
+
+
+def dialog_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text=END_TEXT), KeyboardButton(text=LIST_TEXT)]],
+                               resize_keyboard=True, is_persistent=True)
 
 
 class AdminBot:
@@ -277,7 +281,7 @@ class AdminBot:
             await message.answer("Клиент не найден.")
             return
         self._dialog[uid] = client_id
-        await message.answer(dialog_text(self.data, client_id), reply_markup=dialog_keyboard(client_id))
+        await message.answer(dialog_text(self.data, client_id), reply_markup=dialog_keyboard())
 
     async def _relay(self, message: Message, client_id: str) -> None:
         """The staff member's message goes to the client as a plain message."""
@@ -309,6 +313,14 @@ class AdminBot:
         except Exception:  # noqa: BLE001, S110 - only a mark
             pass
 
+    async def _close(self, client_id: str, user) -> str:
+        """End the client's conversation (the client is asked to rate it); everyone in that dialog leaves it."""
+        ended = await end_conversation(self.data, self.client, client_id, self.staff_name(user))
+        for staff, current in list(self._dialog.items()):
+            if current == client_id:
+                del self._dialog[staff]
+        return "Разговор завершён, клиента попросили оценить его." if ended else "Разговор уже завершён."
+
     async def download(self, message: Message) -> bytes:
         data = await message.bot.download(message.photo[-1])
         return data.read()
@@ -323,7 +335,16 @@ class AdminBot:
 
     async def on_message(self, message: Message) -> None:
         uid = message.from_user.id
-        if uid in self._adding and self.is_admin(uid):
+        if message.text == LIST_TEXT:
+            self._dialog.pop(uid, None)
+            await self._send_support(message, uid)
+        elif message.text == END_TEXT:
+            if uid not in self._dialog:
+                await message.answer("Сначала откройте клиента в списке.")
+            else:
+                await message.answer(await self._close(self._dialog[uid], message.from_user))
+                await self._send_support(message, uid)
+        elif uid in self._adding and self.is_admin(uid):
             await self._add_message(message)
         elif uid in self._dialog:
             await self._relay(message, self._dialog[uid])
@@ -427,12 +448,7 @@ class AdminBot:
             await self._open_dialog(message, uid, client_id)
             return
         if action == "close" and client_id:
-            ended = await end_conversation(self.data, self.client, client_id, self.staff_name(callback.from_user))
-            await callback.answer("Разговор завершён, клиента попросили оценить его" if ended
-                                  else "Разговор уже завершён")
-            for staff, current in list(self._dialog.items()):
-                if current == client_id:
-                    del self._dialog[staff]
+            await callback.answer(await self._close(client_id, callback.from_user))
         else:
             await callback.answer()
             self._dialog.pop(uid, None)

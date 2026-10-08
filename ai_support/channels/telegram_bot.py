@@ -60,7 +60,6 @@ from aiogram.types import (
     Message,
     ReactionTypeEmoji,
     ReplyKeyboardMarkup,
-    ReplyKeyboardRemove,
     URLInputFile,
     User as TgUser,
 )
@@ -176,6 +175,15 @@ def category_keyboard(cat, lang: Lang, questions: list[tuple[str, str]] | None =
         rows.append(nav)
     return InlineKeyboardMarkup(inline_keyboard=rows + [[InlineKeyboardButton(text=BACK_LABEL[lang],
                                                                               callback_data="menu")]])
+
+
+def mini_menu(lang: Lang) -> ReplyKeyboardMarkup:
+    """The client's mini menu under the message field: end the conversation or open the menu.
+
+    Answers carry no buttons, so this is how the client ends a conversation at any moment.
+    """
+    return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text=END_LABEL[lang]), KeyboardButton(text=MENU_LABEL[lang])]],
+                               resize_keyboard=True, is_persistent=True)
 
 
 def settings_keyboard(lang: Lang) -> InlineKeyboardMarkup:
@@ -506,7 +514,7 @@ class TelegramSupportBot:
             await message.answer(t("register_own_number", user.lang), reply_markup=phone_keyboard(user.lang))
             return
         self.users.set_phone(CHANNEL, user.user_id, contact.phone_number)
-        await message.answer(t("registered", user.lang), reply_markup=ReplyKeyboardRemove())
+        await message.answer(t("registered", user.lang), reply_markup=mini_menu(user.lang))
         # An admin may have added this number as an operator: now we know their Telegram id.
         operator = self.operators.link(contact.phone_number, user.user_id, message.from_user.username,
                                        message.from_user.full_name)
@@ -725,6 +733,8 @@ class TelegramSupportBot:
                                       bot=bot)
         elif action.kind == "end":
             await self._client_ends(bot, message.chat.id, user.lang)
+        elif action.kind == "menu":
+            await self._reply_buttons(message, t("main_menu", user.lang), main_keyboard(user.lang), menu=True, bot=bot)
         else:
             await self._ask_quick(message, bot, user, action.question)
 
@@ -988,7 +998,10 @@ class TelegramSupportBot:
         else:
             if opens:
                 await self._clear_buttons(str(message.chat.id), bot)
-            await message.answer(reply.text)
+                # The mini menu stays under the message field (it also refreshes its language).
+                await message.answer(reply.text, reply_markup=mini_menu(reply.language))
+            else:
+                await message.answer(reply.text)
         await self._send_videos(message, reply)
         client_id = str(message.chat.id)
         handoff_id = await self._escalate(message, bot, reply, user, operator, wait) if reply.escalate else None
