@@ -193,7 +193,7 @@ CHANGE_LANGUAGE_LABEL = {Lang.UZ_LATN: "Tilni o'zgartirish", Lang.UZ_CYRL: "Ти
 
 @dataclass(frozen=True)
 class MenuAction:
-    kind: str  # "question" | "operator" | "settings" | "end"
+    kind: str  # "question" | "operator" | "settings" | "end" | "menu"
     question: QuickQuestion | None = None
 
 
@@ -225,6 +225,8 @@ def match_menu(text: str) -> MenuAction | None:
         return MenuAction("settings")
     if text in END_LABEL.values():
         return MenuAction("end")
+    if text in MENU_LABEL.values():
+        return MenuAction("menu")
     for q in QUICK_QUESTIONS:
         if text in q.label.values():
             return MenuAction("question", q)

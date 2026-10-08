@@ -4,6 +4,8 @@ from types import SimpleNamespace as NS
 
 from fakes import FakeLLM, FakeSTT, answer
 
+from aiogram.types import InlineKeyboardMarkup
+
 from ai_support.admin.bot import AdminBot, dialog_text, support_view
 from ai_support.admin.data import AdminData
 from ai_support.admin.web import create_app
@@ -88,7 +90,7 @@ def test_escalation_without_support_chat_reaches_staff_in_the_admin_bot():
     assert "Pulimni qaytaring" in note["text"] and "refund" in note["text"]
     assert note["reply_markup"]["inline_keyboard"][0][0]["callback_data"] == "a:chat:7"
     # The client sees a plain message: no signature and no buttons.
-    assert chat.sent[-1][1] is None and not chat.sent[-1][0].startswith("Yordamchi")
+    assert not isinstance(chat.sent[-1][1], InlineKeyboardMarkup) and not chat.sent[-1][0].startswith("Yordamchi")
     # The client's next message goes to the staff, not to the model.
     asyncio.run(bot.on_client_message(client_msg(chat, "Hali ham kelmadi"), chat))
     assert len(llm.calls) == 1 and "Hali ham kelmadi" in admin_api.to(ADMIN)[-1]["text"]
@@ -345,3 +347,38 @@ def test_dialog_shows_only_the_current_session(tmp_path):
     messages, closed = data.current_messages("7")
     assert not closed and [m["text"] for m in messages] == ["Karta qo'shilmayapti"]
     assert "Pulimni qaytaring" not in dialog_text(data, "7")
+
+
+# --- mini menus: end the conversation at any moment ---------------------------------------------
+
+def test_client_mini_menu_ends_the_conversation_and_opens_the_menu():
+    from ai_support.menu import END_LABEL, MENU_LABEL
+    llm = FakeLLM(answer("Kartalarim bo'limiga kiring.", "uz_latn", topic="add_card"))
+    chat = ClientChat()
+    bot = client_bot(llm, FakeTelegram())
+    asyncio.run(bot.on_client_message(client_msg(chat, "Karta qo'shilmayapti"), chat))
+    kb = chat.sent[-1][1]
+    assert [b.text for row in kb.keyboard for b in row] == [END_LABEL[Lang.UZ_LATN], MENU_LABEL[Lang.UZ_LATN]]
+    asyncio.run(bot.on_client_message(client_msg(chat, MENU_LABEL[Lang.UZ_LATN]), chat))
+    assert chat.sent[-1][1].inline_keyboard[0][0].callback_data.startswith("cat:") and len(llm.calls) == 1
+    asyncio.run(bot.on_client_message(client_msg(chat, END_LABEL[Lang.UZ_LATN]), chat))
+    assert bot.feedback.conversation("telegram", "7") is None and len(llm.calls) == 1
+
+
+def test_staff_mini_menu_ends_the_dialog(tmp_path):
+    from ai_support.admin.bot import END_TEXT, LIST_TEXT
+    db = tmp_path / "bot.sqlite3"
+    waiting_client(db)
+    client = FakeTelegram()
+    bot, _ = admin_bot(db, client)
+    staff = StaffChat()
+    asyncio.run(bot.on_message(staff.message(ADMIN, END_TEXT)))
+    assert "откройте клиента" in staff.answers[-1][0] and client.calls == []
+    cb, _ = staff.callback(ADMIN, "a:chat:7")
+    asyncio.run(bot.on_callback(cb))
+    kb = staff.answers[-1][1]
+    assert [b.text for row in kb.keyboard for b in row] == [END_TEXT, LIST_TEXT] and kb.is_persistent
+    asyncio.run(bot.on_message(staff.message(ADMIN, END_TEXT)))
+    assert FeedbackStore(db).conversation("telegram", "7") is None and ADMIN not in bot._dialog
+    assert client.calls[-1][1]["reply_markup"]["inline_keyboard"][0][0]["callback_data"].startswith("rate:")
+    assert all(p.get("text") != END_TEXT for _, p in client.calls)  # the button text never reaches the client

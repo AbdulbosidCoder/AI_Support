@@ -5,6 +5,7 @@ from types import SimpleNamespace as NS
 
 import aiohttp
 import pytest
+from aiogram.types import InlineKeyboardMarkup
 from aiohttp.test_utils import TestClient, TestServer
 
 from ai_support.admin.auth import sign
@@ -168,7 +169,7 @@ def test_tapped_question_with_a_guide_gets_the_guide_and_screenshots():
     asked, (_, text, kb), (kind, album) = chat.sent
     assert asked[1] == f"{t('your_question', Lang.RU)} {quick_question('add_card').question[Lang.RU]}"
     assert text == f"{guide_text(guides.get('add_card'), Lang.RU)}"
-    assert kb is None
+    assert not isinstance(kb, InlineKeyboardMarkup)  # only the mini menu under the message field
     assert kind == "album" and len(album) == 2 and album[0].data == guides.image(first.id)[1]
     # Uploaded once: the next client gets the same photos by file_id.
     assert [i.file_id for i in guides.get("add_card").images] == ["ALBUM0", "ALBUM1"]
