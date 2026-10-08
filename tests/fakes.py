@@ -41,8 +41,10 @@ class FakeLLM:
 class FakeSTT:
     def __init__(self, text=None):
         self.text = text
+        self.languages = []
 
-    async def transcribe(self, audio: Audio) -> str:
+    async def transcribe(self, audio: Audio, language=None) -> str:
+        self.languages.append(language)
         if self.text is None:
             raise STTError("disabled")
         return self.text

@@ -115,12 +115,16 @@ class SupportEngine:
         return BotReply(t("handoff", lang), lang, escalate=True, escalation_reason="client asked for an operator")
 
     async def handle(self, msg: IncomingMessage) -> BotReply:
-        known_lang = self._store.language(msg.user_id)
+        # The language the client last wrote in, else the one they chose in the channel.
+        known_lang = self._store.language(msg.user_id) or msg.language
         text = msg.text or ""
+        voice_lang: Lang | None = None
 
         if msg.audio is not None:
+            # Hint the recogniser with the caption's language, else the client's: Uzbek is misheard without it.
+            voice_lang = detect_language(text, default=known_lang) if text.strip() else known_lang
             try:
-                spoken = await self._stt.transcribe(msg.audio)
+                spoken = await self._stt.transcribe(msg.audio, voice_lang)
             except STTError as e:
                 log.warning("stt failed: %s", e)
                 lang = known_lang or detect_language(text)
@@ -143,10 +147,16 @@ class SupportEngine:
 
         # Language of the latest message wins; for an image without text keep the last known one.
         fallback_lang = detect_language(text, default=known_lang or Lang.UZ_LATN) if text.strip() else (known_lang or Lang.UZ_LATN)
+        if voice_lang == Lang.UZ_CYRL and fallback_lang == Lang.UZ_LATN:
+            # Recognisers write Uzbek speech mostly in Latin; the client reads Cyrillic.
+            fallback_lang = Lang.UZ_CYRL
         restricted = guardrails.restricted_request(text)
 
         # Image without a caption: the question comes from the image; keep replying in the client's language.
         note = "" if text.strip() else f"Язык ответа, если на изображении нет вопроса клиента: {fallback_lang.value}."
+        if msg.audio is not None:
+            note = (f"Текст клиента распознан из голосового сообщения: возможны ошибки распознавания, "
+                    f"понимай по смыслу. Язык ответа: {fallback_lang.value}.")
         try:
             ans = await self._llm.answer(self._store.history(msg.user_id), text, images, note)
         except LLMError as e:

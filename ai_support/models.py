@@ -44,6 +44,8 @@ class IncomingMessage:
     text: str = ""
     images: list[Image] = field(default_factory=list)
     audio: Audio | None = None
+    # Language the client chose in the channel, if known (a hint for voice recognition).
+    language: Lang | None = None
 
 
 @dataclass
