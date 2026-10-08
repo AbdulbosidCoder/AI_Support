@@ -124,6 +124,12 @@ _T: dict[str, dict[Lang, str]] = {
         Lang.RU: "Настройки. Выберите нужный пункт.",
         Lang.EN: "Settings. Choose an option.",
     },
+    "operator_ai_first": {
+        Lang.UZ_LATN: "Savolingizni yozing: avval o'zim yordam berishga harakat qilaman, hal bo'lmasa, mutaxassisga ulayman.",
+        Lang.UZ_CYRL: "Саволингизни ёзинг: аввал ўзим ёрдам беришга ҳаракат қиламан, ҳал бўлмаса, мутахассисга улайман.",
+        Lang.RU: "Опишите ваш вопрос: сначала постараюсь помочь сам, а если не получится, подключу специалиста.",
+        Lang.EN: "Please describe your question: I will try to help first, and if I can't, I will connect you to a specialist.",
+    },
     "connecting_operator": {
         Lang.UZ_LATN: "Sizni qo'llab-quvvatlash xodimiga ulayapman. Iltimos, biroz kuting.",
         Lang.UZ_CYRL: "Сизни қўллаб-қувватлаш ходимига улаяпман. Илтимос, бироз кутинг.",

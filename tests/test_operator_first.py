@@ -328,3 +328,29 @@ def test_mention_counts_utf16_for_names_with_emoji():
     text, entities = operator_mention(op)
     assert text == "Дилноза 🌸" and entities[0].length == 10
     assert operator_mention(Operator("9", "D", "dilnoza", True, None, ""))[0] == "@dilnoza"
+
+
+def test_operator_request_lets_the_ai_answer_first_and_escalates_when_it_cannot():
+    bot, llm, tg = make()
+    client = Client(42)
+    asyncio.run(bot.on_client_message(client.msg("operator kerak"), tg))
+    assert client.sent[-1] == t("operator_ai_first", Lang.UZ_LATN) and not tg.to(SUPPORT)
+    asyncio.run(bot.on_client_message(client.msg("Kartani qanday qo'shaman?"), tg))
+    # The AI answered at once: no operator was connected first.
+    assert llm.calls and client.sent[-1].endswith("Kartalarim bo'limiga kiring.") and not tg.to(SUPPORT)
+    # It did not help: the client asks for a specialist and gets one.
+    asyncio.run(bot.on_operator_button(NS(data="op", from_user=client.msg("").from_user, message=client.msg(""),
+                                          answer=_noop), tg))
+    assert tg.to(SUPPORT) and bot.feedback.conversation("telegram", "42").handoff_id is not None
+
+
+async def _noop(*_, **__):
+    pass
+
+
+def test_question_the_ai_cannot_answer_after_operator_request_goes_to_the_support_chat():
+    bot, llm, tg = make(FakeLLM(answer("Mutaxassisga yuboraman.", "uz_latn", escalate=True, reason="no KB answer")))
+    client = Client(42)
+    asyncio.run(bot.on_client_message(client.msg("operator bilan bog'lang"), tg))
+    asyncio.run(bot.on_client_message(client.msg("Ish haqi kartamdan noma'lum komissiya yechildi"), tg))
+    assert llm.calls and tg.to(SUPPORT) and bot.feedback.conversation("telegram", "42").handoff_id is not None

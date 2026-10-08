@@ -67,6 +67,22 @@ _SMALL_TALK_WORDS = {
 }
 
 
+# "I need an operator / a person": with nothing else in the message it is a request, not a question.
+_OPERATOR_WORDS = {
+    "operator", "operatorga", "operatorni", "operatorbilan", "xodim", "xodimga", "mutaxassis", "mutaxassisga",
+    "оператор", "оператора", "оператору", "оператором", "ходим", "ходимга", "мутахассис", "мутахассисга",
+    "специалист", "специалиста", "специалисту", "специалистом", "человек", "человеком", "сотрудник",
+    "сотрудника", "сотрудником", "живой", "живым",
+    "human", "person", "agent", "specialist", "someone", "real",
+}
+
+
+def asks_for_operator(text: str) -> bool:
+    """True for a short message that only asks for a person ("operator kerak", "соедините с оператором")."""
+    words = _words(text)
+    return 0 < len(words) <= 7 and any(w in _OPERATOR_WORDS for w in words)
+
+
 def is_small_talk(text: str) -> bool:
     """True for a greeting or a bare "help" without any description of the problem."""
     words = _words(text)
