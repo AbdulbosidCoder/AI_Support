@@ -21,7 +21,7 @@
          font: 15px/1.4 -apple-system, system-ui, "Segoe UI", Roboto, sans-serif; }
   header { position: sticky; top: 0; z-index: 2; background: var(--bg); border-bottom: 1px solid var(--line); }
   nav { display: flex; overflow-x: auto; }
-  nav button { flex: 1; padding: 12px 10px; border: 0; background: none; color: var(--hint); font: inherit;
+  nav button { flex: 1 0 auto; padding: 12px 8px; border: 0; background: none; color: var(--hint); font: inherit;
                font-weight: 600; border-bottom: 2px solid transparent; white-space: nowrap; }
   nav button.on { color: var(--accent); border-bottom-color: var(--accent); }
   main { padding: 12px 16px 40px; max-width: 760px; margin: 0 auto; }
@@ -171,6 +171,50 @@
   .back { color: var(--link); background: none; border: 0; font: inherit; padding: 4px 0; cursor: pointer; }
   .head { background: var(--bg); border-radius: 12px; padding: 12px; margin-top: 6px; }
   .empty { text-align: center; color: var(--hint); padding: 30px 10px; }
+  /* Quick questions and their guides. */
+  .cat-add { display: block; width: 100%; text-align: left; padding: 10px 12px; border: 0; background: none;
+             color: var(--link); font: inherit; cursor: pointer; }
+  .pill.ok { background: color-mix(in srgb, #2e9d5a 16%, transparent); color: #2e9d5a; }
+  .pill.off { background: color-mix(in srgb, #e0902a 18%, transparent); color: #b8731d; }
+  .seg { display: flex; gap: 4px; background: var(--bg2); border-radius: 10px; padding: 3px; margin-bottom: 10px; overflow-x: auto; }
+  .seg button { flex: 1; border: 0; background: none; color: var(--hint); font: inherit; font-size: 13px; font-weight: 600;
+                padding: 6px 8px; border-radius: 8px; cursor: pointer; white-space: nowrap; }
+  .seg button.on { background: var(--bg); color: var(--text); box-shadow: 0 1px 2px rgba(0, 0, 0, .12); }
+  .seg button .has { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #2e9d5a;
+                     margin-left: 5px; vertical-align: middle; }
+  .field { display: grid; gap: 4px; margin-bottom: 10px; }
+  .field > span { font-size: 13px; color: var(--hint); }
+  textarea.big { width: 100%; min-height: 110px; resize: vertical; font: inherit; padding: 8px 10px; border-radius: 10px;
+                 border: 1px solid var(--line); background: var(--bg); color: var(--text); }
+  .step { display: grid; grid-template-columns: 26px 1fr auto; gap: 6px; align-items: center; margin-bottom: 6px; }
+  .step b { width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: var(--accent-text);
+            display: grid; place-items: center; font-size: 13px; }
+  .icon { border: 0; background: var(--bg2); color: var(--text); width: 34px; height: 34px; border-radius: 9px;
+          font: inherit; font-size: 16px; cursor: pointer; }
+  .icon:disabled { opacity: .35; cursor: default; }
+  .shots { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 8px; }
+  .shot { background: var(--bg2); border-radius: 10px; overflow: hidden; display: grid; }
+  .shot .ph { min-width: 0; min-height: 0; aspect-ratio: 9 / 16; }
+  .shot .ph img { height: 100%; max-height: none; }
+  .shot .acts { justify-content: space-between; padding: 4px; gap: 4px; flex-wrap: nowrap; }
+  .shot .icon { width: 30px; height: 28px; font-size: 14px; background: var(--bg); }
+  .upload { display: grid; place-items: center; text-align: center; border: 1.5px dashed var(--line); border-radius: 10px;
+            color: var(--link); cursor: pointer; min-height: 140px; padding: 8px; font-size: 13px; }
+  .upload input { display: none; }
+  .upload.disabled { color: var(--hint); cursor: default; }
+  .errors { background: color-mix(in srgb, #d33f3f 10%, var(--bg)); border: 1px solid color-mix(in srgb, #d33f3f 40%, transparent);
+            color: var(--text); border-radius: 12px; padding: 10px 12px; margin-top: 10px; }
+  .errors b { color: #d33f3f; }
+  .errors ul { margin: 6px 0 0; padding-left: 18px; }
+  .check { display: flex; gap: 8px; align-items: center; margin: 4px 0 10px; }
+  .check input { width: auto; }
+  .savebar { position: sticky; bottom: 0; display: flex; gap: 8px; justify-content: space-between; padding: 10px 0;
+             background: linear-gradient(transparent, var(--bg2) 30%); }
+  .preview.tgchat { min-height: 0; border-radius: 12px; overflow: hidden; }
+  .preview .tgmsgs { padding: 10px 10px 14px; }
+  .preview .kb { align-self: flex-start; display: flex; gap: 2px; width: min(78%, 420px); margin-top: 2px; }
+  .preview .kb span { flex: 1; text-align: center; font-size: 13px; color: #fff; background: var(--service);
+                      border-radius: 8px; padding: 5px 4px; }
 </style>
 </head>
 <body>
@@ -179,6 +223,7 @@
   <button data-tab="sessions">Сессии</button>
   <button data-tab="operators">Операторы</button>
   <button data-tab="clients">Клиенты</button>
+  <button data-tab="quick">Вопросы</button>
 </nav></header>
 <main id="view"><div class="empty">Загрузка…</div></main>
 <script>
@@ -216,9 +261,10 @@ function route() {
   clearInterval(timer);
   document.body.classList.remove("in-chat");
   const [name, arg] = (location.hash.slice(1) || "overview").split("=");
-  const tab = {session: "sessions", client: "clients"}[name] || name;
+  const tab = {session: "sessions", client: "clients", guide: "quick"}[name] || name;
   document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("on", b.dataset.tab === tab));
-  const pages = {overview, sessions, session, operators, clients, client};
+  const pages = {overview, sessions, session, operators, clients, client, quick, guide};
+  window.scrollTo(0, 0);
   (pages[name] || overview)(arg).catch(fail);
 }
 document.getElementById("tabs").onclick = e => { if (e.target.dataset.tab) location.hash = e.target.dataset.tab; };
@@ -575,9 +621,180 @@ async function client(id) {
     <div class="list">${list.map(sessionRow).join("") || '<div class="empty">Сессий нет</div>'}</div>`;
 }
 
+// --- quick questions: the client menu and a guide (text, steps, screenshots) for each question ---
+
+const LANGS = [["uz_latn", "O'zbekcha"], ["uz_cyrl", "Ўзбекча"], ["ru", "Русский"], ["en", "English"]];
+// What the client bot writes above the steps and how it signs an answer (ai_support/templates.py).
+const STEPS_HEAD = {uz_latn: "Qanday hal qilish:", uz_cyrl: "Қандай ҳал қилиш:", ru: "Как решить:", en: "How to fix it:"};
+const SIGN = {uz_latn: "Yordamchi", uz_cyrl: "Ёрдамчи", ru: "Помощник", en: "Assistant"};
+const ASKED = {uz_latn: "Savolingiz:", uz_cyrl: "Саволингиз:", ru: "Ваш вопрос:", en: "Your question:"};
+const KB = {uz_latn: ["Suhbatni yakunlash", "Menyu"], uz_cyrl: ["Суҳбатни якунлаш", "Меню"],
+            ru: ["Завершить разговор", "Меню"], en: ["End conversation", "Menu"]};
+const FORBIDDEN = {promised_refund: "обещание возврата денег", promised_timeline: "обещание срока",
+  confirmed_success: "подтверждение успешной операции", unblocked: "обещание разблокировки",
+  changed_limit_or_data: "изменение лимита, данных или отмена платежа", antifraud_criteria: "правила антифрода",
+  financial_advice: "финансовый совет"};
+const GUIDE_ERR = {no_label: "Напишите текст кнопки хотя бы на одном языке",
+  no_answer: "Напишите ответ или шаги хотя бы на одном языке", too_many_steps: "Не больше 15 шагов",
+  too_long_texts: "Текст слишком длинный (до 3500 знаков)", too_long_labels: "Текст кнопки слишком длинный (до 120 знаков)",
+  bad_image: "Нужен скриншот в PNG или JPEG", image_too_large: "Фото больше 5 МБ", too_many_images: "Не больше 10 фото",
+  empty_image: "Пустой файл", not_found: "Вопрос не найден"};
+const where = w => { const [field, lang, n] = w.split(".");
+  return `${{labels: "кнопка", texts: "ответ", steps: "шаг " + n}[field]}, ${(LANGS.find(l => l[0] === lang) || [, lang])[1]}`; };
+
+async function quick() {
+  const {categories} = await api("/api/quick");
+  view.innerHTML = `<p class="muted">Кнопки клиентского бота по темам. Если у вопроса есть инструкция на языке клиента,
+      бот сразу отправляет её: текст, шаги и скриншоты. Без инструкции отвечает AI по базе знаний.
+      Перед сохранением текст проверяется: бот не обещает возврат и сроки, не подтверждает платежи и не раскрывает антифрод.</p>
+    ${categories.map(c => `<h2>${esc(c.label.ru)}</h2><div class="list">${c.questions.map(q => `
+      <div class="row" onclick="location.hash='guide=${esc(q.id)}'">
+        <div class="grow"><div class="title">${esc(q.label.ru || Object.values(q.label)[0] || q.id)}</div>
+          <div class="muted">${q.guide_languages.length
+            ? `<span class="pill ok">инструкция: ${q.guide_languages.map(l => LANG[l]).join(", ")}</span>`
+            : '<span class="pill">отвечает AI</span>'}
+            ${q.images ? `<span class="pill">фото ${q.images}</span>` : ""}
+            ${q.custom ? '<span class="pill">добавлен</span>' : ""}
+            ${q.hidden ? '<span class="pill off">скрыт</span>' : ""}
+            ${q.updated_at ? " · изменено " + esc(when(q.updated_at)) + (q.updated_by ? ", " + esc(q.updated_by) : "") : ""}</div></div>
+        <span class="muted">›</span></div>`).join("")}
+      <button class="cat-add" onclick="location.hash='guide=new.${esc(c.id)}'">+ Добавить вопрос</button></div>`).join("")}`;
+}
+
+async function guide(arg) {
+  const isNew = arg.startsWith("new.");
+  const g = isNew
+    ? {id: null, category: arg.slice(4), custom: true, default_label: {}, labels: {}, texts: {}, steps: {}, hidden: false, images: []}
+    : await api(`/api/quick/${encodeURIComponent(arg)}`);
+  const cats = isNew || !guide.cats ? (await api("/api/quick")).categories : guide.cats;
+  guide.cats = cats;
+  const cat = cats.find(c => c.id === g.category) || {label: {ru: g.category}};
+  const ed = {labels: {...g.labels}, texts: {...g.texts}, steps: Object.fromEntries(Object.entries(g.steps).map(([k, v]) => [k, [...v]]))};
+  let lang = guide.lang || "ru";
+  const filled = l => Boolean((ed.texts[l] || "").trim() || (ed.steps[l] || []).some(s => s.trim()));
+  view.innerHTML = `<button class="back" onclick="history.back()">‹ Назад</button>
+    <div class="panel"><div class="muted">${esc(cat.label.ru)} · ${g.custom ? "вопрос добавлен в панели" : "встроенный вопрос"}</div>
+      <b id="gtitle" style="font-size:17px"></b></div>
+    <div class="panel"><div class="seg" id="seg"></div>
+      <label class="field"><span>Текст кнопки${g.custom ? "" : " (пусто — как в боте по умолчанию)"}</span>
+        <input id="glabel" maxlength="120"></label>
+      <label class="field"><span>Ответ: что случилось и почему</span>
+        <textarea id="gtext" class="big" maxlength="3500" placeholder="Например: карта добавляется в разделе «Карты». Нужна карта на ваше имя."></textarea></label>
+      <div class="field"><span>Как решить: шаги по порядку</span><div id="steps"></div>
+        <button type="button" class="btn ghost" id="addstep" style="justify-self:start">+ Шаг</button></div>
+    </div>
+    <div class="panel"><h3>Скриншоты <span class="sub">общие для всех языков, до 10, PNG или JPEG до 5 МБ</span></h3>
+      <div class="shots" id="shots"></div></div>
+    <div class="panel"><h3>Как увидит клиент <span class="sub" id="plang"></span></h3>
+      <div class="preview tgchat"><div class="tgmsgs" id="preview"></div></div></div>
+    <label class="check"><input type="checkbox" id="ghidden"> Скрыть вопрос из меню бота</label>
+    <div id="gerr"></div>
+    <div class="savebar"><button class="btn" id="gsave">Сохранить</button>
+      ${isNew ? "" : `<button class="btn ghost danger" id="gdel">${g.custom ? "Удалить вопрос" : "Удалить инструкцию"}</button>`}</div>`;
+  const $ = id => document.getElementById(id);
+  $("ghidden").checked = g.hidden;
+
+  const stepRow = (s, i, n) => `<div class="step"><b>${i + 1}</b>
+    <input data-step="${i}" value="${esc(s)}" placeholder="Шаг ${i + 1}" maxlength="500">
+    <div class="acts" style="flex-wrap:nowrap"><button type="button" class="icon" data-up="${i}" ${i ? "" : "disabled"} aria-label="Выше">↑</button>
+      <button type="button" class="icon" data-rm="${i}" aria-label="Удалить шаг">×</button></div></div>`;
+  const drawSteps = () => {
+    const steps = ed.steps[lang] || [];
+    $("steps").innerHTML = steps.map((s, i) => stepRow(s, i, steps.length)).join("") || '<div class="muted" style="margin-bottom:6px">Шагов пока нет</div>';
+    $("steps").querySelectorAll("input[data-step]").forEach(inp => inp.oninput = () => { ed.steps[lang][+inp.dataset.step] = inp.value; draw(false); });
+    $("steps").querySelectorAll("[data-rm]").forEach(b => b.onclick = () => { ed.steps[lang].splice(+b.dataset.rm, 1); drawSteps(); draw(false); });
+    $("steps").querySelectorAll("[data-up]").forEach(b => b.onclick = () => { const i = +b.dataset.up, st = ed.steps[lang];
+      [st[i - 1], st[i]] = [st[i], st[i - 1]]; drawSteps(); draw(false); });
+  };
+  const label = l => (ed.labels[l] || "").trim() || g.default_label[l] || "";
+  const draw = (fields = true) => {
+    $("seg").innerHTML = LANGS.map(([code, name]) => `<button type="button" data-lang="${code}" class="${code === lang ? "on" : ""}">${name}${filled(code) ? '<span class="has"></span>' : ""}</button>`).join("");
+    $("seg").querySelectorAll("button").forEach(b => b.onclick = () => { lang = guide.lang = b.dataset.lang; drawSteps(); draw(); });
+    if (fields) {
+      $("glabel").value = ed.labels[lang] || ""; $("glabel").placeholder = g.default_label[lang] || "Вопрос, как его задал бы клиент";
+      $("gtext").value = ed.texts[lang] || "";
+    }
+    $("gtitle").textContent = label("ru") || label(lang) || "Новый вопрос";
+    const steps = (ed.steps[lang] || []).filter(s => s.trim());
+    const body = [(ed.texts[lang] || "").trim(), steps.length ? STEPS_HEAD[lang] + "\n" + steps.map((s, i) => `${i + 1}. ${s.trim()}`).join("\n") : ""].filter(Boolean).join("\n\n");
+    $("plang").textContent = (LANGS.find(l => l[0] === lang) || [])[1] || "";
+    const n = g.images.length;
+    $("preview").innerHTML = `<div class="bubble in last">${esc(ASKED[lang])} ${esc(label(lang) || "…")}</div>` + (body
+      ? `<div class="bubble in last"><div class="name">${esc(SIGN[lang])}</div>${esc(body)}</div>
+         <div class="kb">${KB[lang].map(k => `<span>${esc(k)}</span>`).join("")}</div>
+         ${n ? `<div class="bubble in media last"><div class="photos n${Math.min(n, 4)}">${g.images.slice(0, 4).map(i =>
+            `<div class="ph loading" data-src="/api/quick/${encodeURIComponent(g.id)}/images/${i.id}"></div>`).join("")}</div></div>` : ""}`
+      : `<div class="service">${g.custom ? "Без ответа вопрос не сохранится" : "Нет инструкции на этом языке: ответит AI по базе знаний"}</div>`);
+    fillMedia($("preview"));
+  };
+  const drawShots = () => {
+    const canUpload = Boolean(g.id) && g.images.length < 10;
+    $("shots").innerHTML = g.images.map((i, k) => `<div class="shot">
+        <div class="ph loading" data-src="/api/quick/${encodeURIComponent(g.id)}/images/${i.id}"></div>
+        <div class="acts"><button class="icon" data-move="${i.id}" data-d="-1" ${k ? "" : "disabled"} aria-label="Раньше">←</button>
+          <button class="icon" data-move="${i.id}" data-d="1" ${k < g.images.length - 1 ? "" : "disabled"} aria-label="Позже">→</button>
+          <button class="icon" data-delimg="${i.id}" aria-label="Удалить фото">×</button></div></div>`).join("")
+      + (g.images.length < 10 ? `<label class="upload ${canUpload ? "" : "disabled"}">${canUpload
+          ? '+ Добавить скриншот<input type="file" accept="image/png,image/jpeg" multiple>'
+          : "Сначала сохраните вопрос, потом добавьте скриншоты"}</label>` : "");
+    fillMedia($("shots"));
+    $("shots").querySelectorAll("[data-move]").forEach(b => b.onclick = async () => {
+      Object.assign(g, await api(`/api/quick/${encodeURIComponent(g.id)}/images/${b.dataset.move}/move`, {method: "POST", body: JSON.stringify({delta: +b.dataset.d})}));
+      drawShots(); draw(false);
+    });
+    $("shots").querySelectorAll("[data-delimg]").forEach(b => b.onclick = async () => {
+      Object.assign(g, await api(`/api/quick/${encodeURIComponent(g.id)}/images/${b.dataset.delimg}`, {method: "DELETE"}));
+      drawShots(); draw(false);
+    });
+    const file = $("shots").querySelector("input[type=file]");
+    if (file) file.onchange = async () => {
+      for (const f of file.files) {
+        const form = new FormData(); form.append("file", f);
+        const res = await fetch(`/api/quick/${encodeURIComponent(g.id)}/images`, {method: "POST", body: form, headers: {"X-Telegram-Init-Data": initData}});
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) { notify(`${f.name}: ${GUIDE_ERR[body.error] || body.error || res.status}`); break; }
+        Object.assign(g, body);
+      }
+      drawShots(); draw(false);
+    };
+  };
+  $("glabel").oninput = () => { ed.labels[lang] = $("glabel").value; draw(false); };
+  $("gtext").oninput = () => { ed.texts[lang] = $("gtext").value; draw(false); };
+  $("addstep").onclick = () => { (ed.steps[lang] = ed.steps[lang] || []).push(""); drawSteps();
+    const all = $("steps").querySelectorAll("input[data-step]"); all[all.length - 1].focus(); };
+  $("gsave").onclick = async () => {
+    const body = {category: g.category, hidden: $("ghidden").checked, labels: ed.labels, texts: ed.texts,
+                  steps: Object.fromEntries(Object.entries(ed.steps).map(([k, v]) => [k, v.filter(s => s.trim())]))};
+    $("gerr").innerHTML = "";
+    try {
+      const saved = await api(isNew ? "/api/quick" : `/api/quick/${encodeURIComponent(g.id)}`, {method: isNew ? "POST" : "PUT", body: JSON.stringify(body)});
+      if (isNew) { history.replaceState(null, "", "#guide=" + saved.id); return route(); }
+      Object.assign(g, saved); notify("Сохранено");
+    } catch (err) {
+      if (err.message === "forbidden") {
+        $("gerr").innerHTML = `<div class="errors"><b>Не сохранено: так боту отвечать нельзя</b><ul>${err.body.violations.map(v =>
+          `<li>«${esc(v.fragment)}» — ${esc(FORBIDDEN[v.category] || v.category)} (${esc(where(v.where))})</li>`).join("")}</ul>
+          <div class="muted" style="margin-top:6px">Перепишите без обещаний: например, «специалист проверит операцию и сообщит результат».</div></div>`;
+        $("gerr").scrollIntoView({behavior: "smooth", block: "center"});
+      } else notify(GUIDE_ERR[err.message] || "Не сохранено: " + err.message);
+    }
+  };
+  const del = $("gdel");
+  if (del) del.onclick = async () => {
+    if (!del.classList.contains("sure")) {
+      const text = del.textContent; del.classList.add("sure"); del.textContent = "Точно удалить?";
+      setTimeout(() => { del.classList.remove("sure"); del.textContent = text; }, 4000);
+      return;
+    }
+    await api(`/api/quick/${encodeURIComponent(g.id)}`, {method: "DELETE"}).catch(err => notify("Не удалено: " + err.message));
+    location.hash = "quick";
+  };
+  drawSteps(); draw(); drawShots();
+}
+
 if (tg && tg.BackButton) {
   tg.BackButton.onClick(() => history.back());
-  window.addEventListener("hashchange", () => /^#(session|client)=/.test(location.hash)
+  window.addEventListener("hashchange", () => /^#(session|client|guide)=/.test(location.hash)
     ? tg.BackButton.show() : tg.BackButton.hide());
 }
 route();

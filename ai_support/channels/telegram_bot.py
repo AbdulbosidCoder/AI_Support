@@ -46,6 +46,8 @@ from aiogram.enums import ChatAction
 from aiogram.filters import Command, CommandStart
 from aiogram.types import (
     BotCommand,
+    BufferedInputFile,
+    InputMediaPhoto,
     MessageEntity,
     BotCommandScopeChat,
     CallbackQuery,
@@ -70,12 +72,13 @@ from ..feedback import (
     BOT, OPERATOR, TIMEOUT, TONE_LABELS, TONES, Assessment, FeedbackStore, RatingError, RatingRequest, client_level,
     opens_conversation, render_assessment, render_rating,
 )
+from ..guides import Guide, GuideStore, guide_text
 from ..handoffs import WAITING, WITH_AI, Candidate, Handoff, HandoffStore, ReviewError
 from ..language import is_small_talk
 from ..llm import Turn
 from ..menu import (
     CHANGE_LANGUAGE_LABEL, CHANGE_PHONE_LABEL, CHOOSE_LANGUAGE, END_LABEL, LANGUAGE_CHOICES, MENU_LABEL, OPERATOR_LABEL,
-    BACK_LABEL, CATEGORIES, SETTINGS_LABEL, category, match_menu, quick_question,
+    BACK_LABEL, CATEGORIES, SETTINGS_LABEL, category, match_menu,
 )
 from ..models import Audio, BotReply, Image, IncomingMessage, Lang, VideoAttachment
 from ..operators import Operator, OperatorStore, pick_free
@@ -140,10 +143,16 @@ def main_keyboard(lang: Lang) -> InlineKeyboardMarkup:
 quick_keyboard = main_keyboard
 
 
-def category_keyboard(cat, lang: Lang) -> InlineKeyboardMarkup:
-    """A topic's questions, one per row so the full question fits, and "back" to the topics."""
+def category_keyboard(cat, lang: Lang, questions: list[tuple[str, str]] | None = None) -> InlineKeyboardMarkup:
+    """A topic's questions, one per row so the full question fits, and "back" to the topics.
+
+    `questions` are (id, button text) as the admin panel left them (ai_support/guides.py); by default the
+    built-in ones.
+    """
+    if questions is None:
+        questions = [(q.id, q.label[lang]) for q in cat.questions]
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=q.label[lang], callback_data=f"q:{q.id}")] for q in cat.questions
+        [InlineKeyboardButton(text=label, callback_data=f"q:{qid}")] for qid, label in questions
     ] + [[InlineKeyboardButton(text=BACK_LABEL[lang], callback_data="menu")]])
 
 
@@ -275,7 +284,8 @@ def message_kind(message: Message) -> str:
 class TelegramSupportBot:
     def __init__(self, settings: Settings, engine: SupportEngine, users: UserStore | None = None,
                  handoffs: HandoffStore | None = None, feedback: FeedbackStore | None = None,
-                 chatlog: ChatLog | None = None, operators: OperatorStore | None = None):
+                 chatlog: ChatLog | None = None, operators: OperatorStore | None = None,
+                 guides: GuideStore | None = None):
         self.settings = settings
         self.engine = engine
         self.users = users or UserStore(":memory:")
@@ -287,6 +297,8 @@ class TelegramSupportBot:
         self.chatlog = chatlog or ChatLog(":memory:")
         # Operators added by an admin; while the list is empty anyone in the support chat answers.
         self.operators = operators or OperatorStore(":memory:")
+        # Answers to quick questions written in the admin panel: text, steps and screenshots.
+        self.guides = guides or GuideStore(":memory:")
         self._albums: MediaGroupCollector[tuple[Message, Bot]] | None = None
         # Client chat -> (message id, is a menu) of the bot's latest message with inline buttons. Only that
         # message keeps buttons: older ones lose them, and a menu is edited in place instead of re-sent.
@@ -527,7 +539,7 @@ class TelegramSupportBot:
         user = await self._registered_callback(callback)
         if user is not None:
             await self._show(callback, f"{cat.label[user.lang]}\n\n{t('pick_question', user.lang)}",
-                             category_keyboard(cat, user.lang))
+                             category_keyboard(cat, user.lang, self.guides.menu(cat.id, user.lang)))
 
     async def on_settings_button(self, callback: CallbackQuery) -> None:
         user = await self._registered_callback(callback)
@@ -540,7 +552,7 @@ class TelegramSupportBot:
             await self._to_operator(callback.message, bot, user, callback.from_user)
 
     async def on_quick_question(self, callback: CallbackQuery, bot: Bot) -> None:
-        q = quick_question((callback.data or "").split(":", 1)[1])
+        q = self.guides.question((callback.data or "").split(":", 1)[1])
         if q is None:
             await callback.answer()
             return
@@ -571,11 +583,50 @@ class TelegramSupportBot:
             await message.answer(asked)
         if await self._with_operator(message, bot, [], question):
             return
+        found = self.guides.answer(q.id, lang)
+        if found is not None:
+            # The admin wrote this answer: no model and no wait for an operator, the client can still ask one.
+            await self._send_guide(message, bot, q, *found, question, from_user)
+            return
         if await self._operator_first(message, bot, [], question, lang, from_user):
             return
         await bot.send_chat_action(message.chat.id, ChatAction.TYPING)
         reply = await self.engine.handle(IncomingMessage(user_id=str(message.chat.id), text=question))
         await self._deliver(message, bot, reply, from_user)
+
+    async def _send_guide(self, message: Message, bot: Bot, q, guide: Guide, lang: Lang, question: str,
+                          from_user=None) -> None:
+        """A quick question's guide: the text and steps, then the screenshots as one album."""
+        reply = BotReply(guide_text(guide, lang), lang, topic=q.id, client_text=question)
+        await self._deliver(message, bot, reply, from_user)
+        await self._send_guide_images(message, guide)
+
+    async def _send_guide_images(self, message: Message, guide: Guide) -> None:
+        """Screenshots after the guide; a failed upload never breaks the answer already sent."""
+        media = []
+        for img in guide.images:
+            if img.file_id:
+                media.append((img.id, img.file_id))
+                continue
+            stored = self.guides.image(img.id)
+            if stored is not None:
+                ext = "png" if stored[3] == "image/png" else "jpg"
+                media.append((img.id, BufferedInputFile(stored[1], filename=f"guide-{img.id}.{ext}")))
+        if not media:
+            return
+        try:
+            if len(media) == 1:
+                sent = [await message.answer_photo(media[0][1])]
+            else:
+                sent = await message.answer_media_group([InputMediaPhoto(media=m) for _, m in media])
+        except Exception as e:  # noqa: BLE001 - Telegram/network errors: the text is already sent
+            log.warning("guide %s images not sent: %s", guide.qid, e)
+            return
+        for (image_id, _), m in zip(media, sent):
+            photo = getattr(m, "photo", None)
+            if photo:
+                # Upload once: later clients get the same picture by id.
+                self.guides.remember_file_id(image_id, photo[-1].file_id)
 
     async def _to_operator(self, message: Message, bot: Bot, user: User, from_user=None) -> None:
         chat_id = str(message.chat.id)
@@ -1318,8 +1369,9 @@ async def main() -> None:
     feedback = FeedbackStore(settings.db_path)
     chatlog = ChatLog(settings.db_path)
     operators = OperatorStore(settings.db_path)
+    guides = GuideStore(settings.db_path)
     support = TelegramSupportBot(settings, build_engine(settings, handoffs), users, handoffs, feedback, chatlog,
-                                 operators=operators)
+                                 operators=operators, guides=guides)
     dp.include_router(support.router)
     try:
         await set_commands(bot, settings.support_chat_id)
