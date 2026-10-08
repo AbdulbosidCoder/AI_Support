@@ -88,6 +88,12 @@ _T: dict[str, dict[Lang, str]] = {
         Lang.RU: "Ваш вопрос:",
         Lang.EN: "Your question:",
     },
+    "guide_steps": {
+        Lang.UZ_LATN: "Qanday hal qilish:",
+        Lang.UZ_CYRL: "Қандай ҳал қилиш:",
+        Lang.RU: "Как решить:",
+        Lang.EN: "How to fix it:",
+    },
     "assistant_name": {
         Lang.UZ_LATN: "Yordamchi",
         Lang.UZ_CYRL: "Ёрдамчи",

@@ -17,6 +17,7 @@ from pathlib import Path
 from aiohttp import ClientSession, ClientTimeout, web
 
 from ..channels.telegram_bot import _lang, end_keyboard
+from ..guides import MAX_IMAGE_BYTES, GuideError
 from ..handoffs import HandoffStore
 from ..models import BotReply
 from ..operators import OperatorError
@@ -140,6 +141,106 @@ async def delete_operator(request: web.Request) -> web.Response:
         return _json({"error": str(e)}, 404)
     log.info("operator %s deleted by admin %s", key, request[ADMIN_USER]["id"])
     return _json({"ok": True})
+
+
+# --- quick questions and their guides ------------------------------------------------------------
+
+def _guide_error(e: GuideError) -> web.Response:
+    if e.code == "forbidden":
+        found = [{"category": v.category, "fragment": v.fragment, "where": w} for v, w in zip(e.violations, e.where)]
+        return _json({"error": "forbidden", "violations": found}, 400)
+    return _json({"error": e.code}, 404 if e.code == "not_found" else 400)
+
+
+async def quick(request: web.Request) -> web.Response:
+    return _json({"categories": request.app[DATA].quick()})
+
+
+async def quick_guide(request: web.Request) -> web.Response:
+    guide = request.app[DATA].quick_guide(request.match_info["qid"])
+    return _json(guide) if guide is not None else _json({"error": "not_found"}, 404)
+
+
+async def save_quick(request: web.Request) -> web.Response:
+    """Create a question (POST /api/quick) or save a question's guide (PUT /api/quick/{qid}).
+
+    Nothing is saved if any text holds something the bot must never say (ai_support/guardrails.py).
+    """
+    try:
+        body = await request.json()
+    except ValueError:
+        return _json({"error": "bad_json"}, 400)
+    if not isinstance(body, dict):
+        return _json({"error": "bad_json"}, 400)
+    data, qid = request.app[DATA], request.match_info.get("qid")
+    current = data.quick_guide(qid) if qid else None
+    if qid and current is None:
+        return _json({"error": "not_found"}, 404)
+    cid = current["category"] if current else str(body.get("category") or "")
+    try:
+        g = data.guides.save(qid, cid, body.get("labels"), body.get("texts"), body.get("steps"),
+                             bool(body.get("hidden")), by=_admin_name(request[ADMIN_USER]))
+    except GuideError as e:
+        return _guide_error(e)
+    log.info("quick question %s saved by admin %s", g.qid, request[ADMIN_USER]["id"])
+    return _json(data.quick_guide(g.qid))
+
+
+async def delete_quick(request: web.Request) -> web.Response:
+    qid = request.match_info["qid"]
+    try:
+        request.app[DATA].guides.delete(qid)
+    except GuideError as e:
+        return _guide_error(e)
+    log.info("quick question %s guide deleted by admin %s", qid, request[ADMIN_USER]["id"])
+    return _json({"ok": True})
+
+
+async def add_quick_image(request: web.Request) -> web.Response:
+    """A screenshot for a guide, sent as multipart form field "file"."""
+    qid = request.match_info["qid"]
+    try:
+        form = await request.post()
+    except (ValueError, web.HTTPRequestEntityTooLarge):
+        return _json({"error": "image_too_large"}, 400)
+    upload = form.get("file")
+    if upload is None or not hasattr(upload, "file"):
+        return _json({"error": "no_file"}, 400)
+    try:
+        request.app[DATA].guides.add_image(qid, upload.file.read(MAX_IMAGE_BYTES + 1))
+    except GuideError as e:
+        return _guide_error(e)
+    return _json(request.app[DATA].quick_guide(qid))
+
+
+async def quick_image(request: web.Request) -> web.Response:
+    stored = request.app[DATA].guides.image(_int(request.match_info["id"], 0))
+    if stored is None or stored[0] != request.match_info["qid"]:
+        return _json({"error": "not_found"}, 404)
+    return web.Response(body=stored[1], content_type=stored[3], headers={"Cache-Control": "private, max-age=3600"})
+
+
+async def delete_quick_image(request: web.Request) -> web.Response:
+    qid = request.match_info["qid"]
+    try:
+        request.app[DATA].guides.delete_image(qid, _int(request.match_info["id"], 0))
+    except GuideError as e:
+        return _guide_error(e)
+    return _json(request.app[DATA].quick_guide(qid))
+
+
+async def move_quick_image(request: web.Request) -> web.Response:
+    qid = request.match_info["qid"]
+    try:
+        body = await request.json()
+        delta = -1 if int(body.get("delta", 0)) < 0 else 1
+    except (ValueError, TypeError, AttributeError):
+        return _json({"error": "bad_json"}, 400)
+    try:
+        request.app[DATA].guides.move_image(qid, _int(request.match_info["id"], 0), delta)
+    except GuideError as e:
+        return _guide_error(e)
+    return _json(request.app[DATA].quick_guide(qid))
 
 
 def _admin_name(user: dict) -> str:
@@ -319,7 +420,8 @@ def create_app(data: AdminData, bot_token: str, admin_ids: frozenset[int], clien
                fetch: Fetch | None = None, support_chat_id: int | None = None,
                telegram: Call | None = None) -> web.Application:
     """bot_token checks the admin's launch data; client_bot_token downloads what clients sent."""
-    app = web.Application(middlewares=[admin_only])
+    # Screenshots for guides are uploaded through the panel: a little over one image's limit.
+    app = web.Application(middlewares=[admin_only], client_max_size=MAX_IMAGE_BYTES + 256 * 1024)
     app[DATA], app[TOKEN], app[ADMINS] = data, bot_token, frozenset(admin_ids)
     app[FETCH], app[CACHE] = fetch or telegram_fetch(client_bot_token), OrderedDict()
     app[TELEGRAM], app[SUPPORT_CHAT] = telegram or telegram_call(client_bot_token), support_chat_id
@@ -339,4 +441,13 @@ def create_app(data: AdminData, bot_token: str, admin_ids: frozenset[int], clien
     app.router.add_get("/api/clients", clients)
     app.router.add_get("/api/clients/{id}/stats", client_stats)
     app.router.add_get("/api/media/{id}/{n}", media)
+    app.router.add_get("/api/quick", quick)
+    app.router.add_post("/api/quick", save_quick)
+    app.router.add_get("/api/quick/{qid}", quick_guide)
+    app.router.add_put("/api/quick/{qid}", save_quick)
+    app.router.add_delete("/api/quick/{qid}", delete_quick)
+    app.router.add_post("/api/quick/{qid}/images", add_quick_image)
+    app.router.add_get("/api/quick/{qid}/images/{id}", quick_image)
+    app.router.add_delete("/api/quick/{qid}/images/{id}", delete_quick_image)
+    app.router.add_post("/api/quick/{qid}/images/{id}/move", move_quick_image)
     return app

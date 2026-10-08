@@ -1,8 +1,8 @@
 """What the admin bot and panel read: clients, sessions as chats, operators and their activity.
 
-Reads the client bot's SQLite database (same DB_PATH, shared Docker volume). The only thing the
-admin side writes is the operator list. A session is a conversation (ai_support/feedback.py); its
-chat is the client's logged messages after the previous conversation ended, up to this one's end.
+Reads the client bot's SQLite database (same DB_PATH, shared Docker volume). The admin side writes
+the operator list and the quick-question guides (ai_support/guides.py). A session is a conversation
+(ai_support/feedback.py); its chat is the client's logged messages after the previous conversation ended, up to this one's end.
 Sessions from before the chat log existed are rebuilt from the saved hand-off and operator replies.
 """
 from __future__ import annotations
@@ -15,9 +15,16 @@ from pathlib import Path
 
 from ..chatlog import BOT, CLIENT, OPERATOR, SYSTEM, ChatLog
 from ..feedback import FeedbackStore
+from ..guides import Guide, GuideStore
 from ..handoffs import HandoffStore
+from ..menu import CATEGORIES, quick_question
+from ..models import Lang
 from ..operators import Operator, OperatorStore, is_phone
 from ..users import UserStore
+
+
+def _langs(values: dict) -> dict:
+    return {(k.value if isinstance(k, Lang) else k): v for k, v in values.items()}
 
 
 def _today() -> str:
@@ -34,6 +41,7 @@ class AdminData:
         self.feedback = FeedbackStore(path)
         self.chatlog = ChatLog(path)
         self.operators = OperatorStore(path)
+        self.guides = GuideStore(path)
         self._db = sqlite3.connect(str(path), check_same_thread=False, timeout=10)
         self._db.row_factory = sqlite3.Row
         self._lock = threading.Lock()
@@ -51,6 +59,44 @@ class AdminData:
 
     def _user_columns(self) -> set[str]:
         return {r["name"] for r in self._all("PRAGMA table_info(users)")}
+
+    # --- quick questions and their guides ------------------------------------------------------
+
+    def quick(self) -> list[dict]:
+        """The client menu as the admin edits it: topics, their questions and what each one answers with."""
+        guides = self.guides.all()
+        out = []
+        for cat in CATEGORIES:
+            items = [self._quick_item(q.id, guides.get(q.id), q.label) for q in cat.questions]
+            items += [self._quick_item(g.qid, g, None) for g in guides.values() if g.custom and g.category == cat.id]
+            out.append({"id": cat.id, "label": _langs(cat.label), "questions": items})
+        return out
+
+    @staticmethod
+    def _quick_item(qid: str, g: Guide | None, default: dict | None) -> dict:
+        labels = {**_langs(default or {}), **_langs(g.labels if g else {})}
+        return {
+            "id": qid, "custom": default is None, "label": labels,
+            "hidden": bool(g and g.hidden),
+            "guide_languages": [l.value for l in Lang if g and g.has_answer(l)],
+            "images": len(g.images) if g else 0,
+            "updated_at": g.updated_at if g else None, "updated_by": g.updated_by if g else None,
+        }
+
+    def quick_guide(self, qid: str) -> dict | None:
+        g = self.guides.get(qid)
+        builtin = quick_question(qid)
+        if g is None and builtin is None:
+            return None
+        cid = g.category if g else next(c.id for c in CATEGORIES if builtin in c.questions)
+        return {
+            "id": qid, "category": cid, "custom": builtin is None,
+            "default_label": _langs(builtin.label) if builtin else {},
+            "labels": _langs(g.labels) if g else {}, "texts": _langs(g.texts) if g else {},
+            "steps": _langs(g.steps) if g else {}, "hidden": bool(g and g.hidden),
+            "images": [{"id": i.id, "size": i.size, "content_type": i.content_type} for i in (g.images if g else [])],
+            "updated_at": g.updated_at if g else None, "updated_by": g.updated_by if g else None,
+        }
 
     # --- overview ----------------------------------------------------------------------------
 

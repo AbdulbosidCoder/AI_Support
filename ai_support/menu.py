@@ -2,8 +2,9 @@
 
 The menu is a tree: topics first (registration, cards, payments...), then the questions of the
 chosen topic, each written in full as the client would ask it. A quick question is answered exactly
-as if the client had typed it: it goes through the engine, the knowledge base and the guardrails.
-Channels only render the buttons.
+as if the client had typed it: it goes through the engine, the knowledge base and the guardrails,
+unless an admin wrote a guide for it in the panel (ai_support/guides.py), which is then sent instead.
+Admins can also rename, hide or add questions there. Channels only render the buttons.
 """
 from __future__ import annotations
 
