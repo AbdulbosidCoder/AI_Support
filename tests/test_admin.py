@@ -314,7 +314,7 @@ def test_only_listed_operators_reach_the_client():
     operator = FakeMessage("Tekshiryapmiz", -100, 10, reply_to=NS(message_id=55))
     asyncio.run(bot.on_operator_reply(operator, tg))
     client, text = tg.sent[0]
-    assert client == 7 and text.endswith(":\nTekshiryapmiz")  # signed as the support specialist
+    assert client == 7 and text == "Tekshiryapmiz"  # a plain message, as from a person
 
 
 def test_session_prefers_messages_saved_with_conversation_id(tmp_path):
@@ -483,8 +483,7 @@ def test_admin_answers_a_session_from_the_panel(tmp_path):
                       ("POST", f"/api/sessions/{conv.id}/reply", ADMIN, {"text": "  "}))
     assert sent == (200, {"ok": True, "session_id": conv.id}) and empty[0] == 400
     (m1, to_client), (m2, copy) = tg.calls
-    assert to_client["chat_id"] == 7 and to_client["text"].endswith(":\nTekshiryapmiz")
-    assert to_client["reply_markup"]["inline_keyboard"][0][0]["callback_data"] == "end"
+    assert to_client == {"chat_id": 7, "text": "Tekshiryapmiz"}  # no signature, no buttons
     assert copy["chat_id"] == -100 and copy["reply_to_message_id"] == 55 and "Tekshiryapmiz" in copy["text"]
     # The operator's replies to the copy reach the same client; the AI no longer takes the case over.
     assert handoffs.find("-100", "502").id == hid and handoffs.due() == []
@@ -503,8 +502,7 @@ def test_admin_reply_to_bot_session_opens_a_handoff(tmp_path):
     app = create_app(AdminData(db), TOKEN, frozenset({ADMIN}), support_chat_id=-100, telegram=tg)
     (status, body), = api(app, ("POST", f"/api/sessions/{conv.id}/reply", ADMIN, {"text": "Проверим"}))
     assert status == 200 and body["session_id"] == conv.id
-    from ai_support.templates import t
-    assert tg.calls[0][1]["text"] == f"{t('operator_name', Lang.RU)}:\nПроверим"  # the client's language
+    assert tg.calls[0][1]["text"] == "Проверим"
     h = handoffs.find("-100", "502")
     assert h is not None and h.client_chat_id == "8" and h.client_text == "Карта не добавляется"
     # The client's next messages go to the support chat: the conversation has the hand-off now.

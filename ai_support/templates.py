@@ -107,10 +107,10 @@ _T: dict[str, dict[Lang, str]] = {
         Lang.EN: "Support specialist",
     },
     "with_operator": {
-        Lang.UZ_LATN: "Murojaatingiz qo'llab-quvvatlash xodimida. Xabarlaringizni unga yetkazaman, u shu chatda javob beradi.",
-        Lang.UZ_CYRL: "Мурожаатингиз қўллаб-қувватлаш ходимида. Хабарларингизни унга етказаман, у шу чатда жавоб беради.",
-        Lang.RU: "Ваше обращение у специалиста поддержки. Я передаю ему ваши сообщения, он ответит в этом чате.",
-        Lang.EN: "Your request is with a support specialist. I pass your messages to them, and they will reply in this chat.",
+        Lang.UZ_LATN: "Murojaatingiz mutaxassisda, u shu chatda javob beradi. Savolingizni shu yerga yozishda davom etishingiz mumkin.",
+        Lang.UZ_CYRL: "Мурожаатингиз мутахассисда, у шу чатда жавоб беради. Саволингизни шу ерга ёзишда давом этишингиз мумкин.",
+        Lang.RU: "Ваше обращение уже у специалиста, он ответит в этом чате. Можете писать сюда, всё будет видно.",
+        Lang.EN: "Your request is already with a specialist, and they will reply in this chat. Feel free to keep writing here.",
     },
     "main_menu": {
         Lang.UZ_LATN: "Asosiy menyu. Muammoingizni yozing yoki mavzuni tanlang:",
@@ -125,10 +125,10 @@ _T: dict[str, dict[Lang, str]] = {
         Lang.EN: "Settings. Choose an option.",
     },
     "operator_ai_first": {
-        Lang.UZ_LATN: "Savolingizni yozing: avval o'zim yordam berishga harakat qilaman, hal bo'lmasa, mutaxassisga ulayman.",
-        Lang.UZ_CYRL: "Саволингизни ёзинг: аввал ўзим ёрдам беришга ҳаракат қиламан, ҳал бўлмаса, мутахассисга улайман.",
-        Lang.RU: "Опишите ваш вопрос: сначала постараюсь помочь сам, а если не получится, подключу специалиста.",
-        Lang.EN: "Please describe your question: I will try to help first, and if I can't, I will connect you to a specialist.",
+        Lang.UZ_LATN: "Albatta. Muammoni qisqacha yozing, yordam beraman. Kerak bo'lsa, mas'ul mutaxassisni ulayman.",
+        Lang.UZ_CYRL: "Албатта. Муаммони қисқача ёзинг, ёрдам бераман. Керак бўлса, масъул мутахассисни улайман.",
+        Lang.RU: "Конечно. Опишите коротко, что случилось, я помогу. Если понадобится, подключу профильного специалиста.",
+        Lang.EN: "Of course. Please describe briefly what happened and I'll help. If needed, I'll bring in the right specialist.",
     },
     "connecting_operator": {
         Lang.UZ_LATN: "Sizni qo'llab-quvvatlash xodimiga ulayapman. Iltimos, biroz kuting.",
@@ -137,10 +137,10 @@ _T: dict[str, dict[Lang, str]] = {
         Lang.EN: "Connecting you to a support specialist. Please wait a moment.",
     },
     "ai_takeover": {
-        Lang.UZ_LATN: "Hozir barcha xodimlarimiz band, shuning uchun sizga AI yordamchi javob beradi.",
-        Lang.UZ_CYRL: "Ҳозир барча ходимларимиз банд, шунинг учун сизга AI ёрдамчи жавоб беради.",
-        Lang.RU: "Сейчас все специалисты заняты, поэтому вам ответит AI-помощник.",
-        Lang.EN: "All our specialists are busy right now, so the AI assistant will help you.",
+        Lang.UZ_LATN: "Kutganingiz uchun rahmat, sizga yordam beraman.",
+        Lang.UZ_CYRL: "Кутганингиз учун раҳмат, сизга ёрдам бераман.",
+        Lang.RU: "Спасибо, что подождали, сейчас помогу.",
+        Lang.EN: "Thanks for waiting, I'll help you now.",
     },
     "ai_how_help": {
         Lang.UZ_LATN: "Qanday yordam kerak? Muammoni yozing yoki mavzuni tanlang:",
@@ -191,10 +191,10 @@ _T: dict[str, dict[Lang, str]] = {
         Lang.EN: "Please describe the problem or send a screenshot of the Xonsaroy Pay app.",
     },
     "rate_bot": {
-        Lang.UZ_LATN: "Suhbat yakunlandi. Yordamchi qanchalik yordam bera oldi? Baholang (1 — yomon, 5 — a'lo):",
-        Lang.UZ_CYRL: "Суҳбат якунланди. Ёрдамчи қанчалик ёрдам бера олди? Баҳоланг (1 — ёмон, 5 — аъло):",
-        Lang.RU: "Разговор завершён. Насколько помог помощник? Оцените (1 — плохо, 5 — отлично):",
-        Lang.EN: "The conversation has ended. How much did the assistant help? Please rate (1 — poor, 5 — excellent):",
+        Lang.UZ_LATN: "Suhbat yakunlandi. Sizga qanchalik yordam bera oldik? Baholang (1 — yomon, 5 — a'lo):",
+        Lang.UZ_CYRL: "Суҳбат якунланди. Сизга қанчалик ёрдам бера олдик? Баҳоланг (1 — ёмон, 5 — аъло):",
+        Lang.RU: "Разговор завершён. Насколько мы смогли помочь? Оцените, пожалуйста (1 — плохо, 5 — отлично):",
+        Lang.EN: "The conversation has ended. How well did we help? Please rate (1 — poor, 5 — excellent):",
     },
     "rate_operator": {
         Lang.UZ_LATN: "Suhbat yakunlandi. Qo'llab-quvvatlash xodimi qanchalik yordam bera oldi? Baholang (1 — yomon, 5 — a'lo):",

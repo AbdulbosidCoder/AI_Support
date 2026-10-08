@@ -22,9 +22,9 @@ LANGUAGE_CHOICES: list[tuple[Lang, str]] = [
 
 # Shown before the client has chosen a language, so it greets in all three main languages.
 CHOOSE_LANGUAGE = (
-    "Assalomu alaykum! Men Xonsaroy Pay yordamchisiman. Iltimos, tilni tanlang.\n\n"
-    "Здравствуйте! Я помощник Xonsaroy Pay. Пожалуйста, выберите язык.\n\n"
-    "Hello! I am the Xonsaroy Pay assistant. Please choose your language."
+    "Assalomu alaykum! Xonsaroy Pay qo'llab-quvvatlash xizmati. Iltimos, tilni tanlang.\n\n"
+    "Здравствуйте! Это поддержка Xonsaroy Pay. Пожалуйста, выберите язык.\n\n"
+    "Hello! This is Xonsaroy Pay support. Please choose your language."
 )
 
 
@@ -150,9 +150,6 @@ QUICK_QUESTIONS: list[QuickQuestion] = [q for c in CATEGORIES for q in c.questio
 
 OPERATOR_LABEL = {Lang.UZ_LATN: "Operator", Lang.UZ_CYRL: "Оператор",
                   Lang.RU: "Оператор", Lang.EN: "Operator"}
-# Under the AI's answer to a client who asked for a person: the answer did not help.
-STILL_OPERATOR_LABEL = {Lang.UZ_LATN: "Mutaxassis kerak", Lang.UZ_CYRL: "Мутахассис керак",
-                        Lang.RU: "Нужен специалист", Lang.EN: "I need a specialist"}
 SETTINGS_LABEL = {Lang.UZ_LATN: "Sozlamalar", Lang.UZ_CYRL: "Созламалар",
                   Lang.RU: "Настройки", Lang.EN: "Settings"}
 END_LABEL = {Lang.UZ_LATN: "Suhbatni yakunlash", Lang.UZ_CYRL: "Суҳбатни якунлаш",

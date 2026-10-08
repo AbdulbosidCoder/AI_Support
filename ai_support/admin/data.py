@@ -430,6 +430,56 @@ class AdminData:
             out.append(item)
         return out
 
+    # --- the support menu in the admin bot ---------------------------------------------------------
+
+    def is_staff(self, user_id: int, admin_ids) -> bool:
+        """Admins and active operators with a known Telegram id may chat with clients from the admin bot."""
+        return user_id in admin_ids or any(o.user_id == str(user_id) for o in self.operators.available())
+
+    def support_queue(self, limit: int = 30) -> list[dict]:
+        """Open conversations a person is handling or that wait for one, the waiting ones first."""
+        rows = self._all("""SELECT c.*, h.status AS h_status, h.assigned_id, h.assigned_name FROM conversations c
+                            JOIN handoffs h ON h.id = c.handoff_id
+                            WHERE c.status = 'open' AND COALESCE(h.status, 'waiting') != 'closed'
+                            ORDER BY c.id DESC LIMIT ?""",
+                         (max(1, min(limit, 100)),))
+        names = self._client_names()
+        out = []
+        for r in rows:
+            client = names.get((r["channel"], r["client_id"]), {})
+            last = self._one("""SELECT text, created_at FROM chat_messages WHERE channel = ? AND client_id = ?
+                                AND sender = ? ORDER BY id DESC LIMIT 1""", (r["channel"], r["client_id"], CLIENT))
+            out.append({
+                "session_id": r["id"], "client_id": r["client_id"],
+                "client_name": client.get("full_name") or client.get("username") or r["client_id"],
+                # waiting: nobody answered yet; ai: the AI took over after a silence; operator: a person has it.
+                "state": r["h_status"] or "waiting", "operator_id": r["operator_id"] or r["assigned_id"],
+                "operator_name": r["operator_name"] or r["assigned_name"],
+                "last_text": last["text"] if last else "", "last_at": last["created_at"] if last else r["opened_at"],
+            })
+        order = {"waiting": 0, "ai": 1, "operator": 2}
+        return sorted(out, key=lambda x: (order.get(x["state"], 3), x["last_at"]))
+
+    def client_target(self, client_id: str, channel: str = "telegram") -> dict | None:
+        """Where a staff member's message to this client goes: their latest session (see reply_target)."""
+        r = self._one("SELECT id FROM conversations WHERE channel = ? AND client_id = ? ORDER BY id DESC LIMIT 1",
+                      (channel, client_id))
+        if r is not None:
+            return self.reply_target(r["id"])
+        user = self._client_names().get((channel, client_id))
+        if user is None:
+            return None
+        # A registered client with no conversation yet: the staff member starts one.
+        registered = self.users.get(channel, client_id)
+        return {"session_id": None, "channel": channel, "client_id": client_id,
+                "client_name": user.get("full_name") or user.get("username") or client_id,
+                "language": registered.lang.value if registered else Lang.UZ_LATN.value, "topic": "",
+                "status": "closed", "handoff": None, "last_client_text": ""}
+
+    def recent_messages(self, client_id: str, limit: int = 12, channel: str = "telegram") -> list[dict]:
+        """The client's latest messages (client, AI, staff), oldest first, for the dialog in the admin bot."""
+        return [_chat(m.__dict__) for m in self.chatlog.for_client(channel, client_id, limit)]
+
     def close(self) -> None:
         for store in (self.users, self.handoffs, self.feedback, self.chatlog, self.operators):
             store.close()
