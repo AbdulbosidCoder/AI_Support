@@ -177,6 +177,45 @@ class OperatorStore:
             raise OperatorError("not_found")
         return self.get(key)  # type: ignore[return-value]
 
+    def update(self, key: str | int, name: str | None = None, phone: str | None = None) -> Operator:
+        """Rename an operator or change their phone; a new phone unlinks nothing already linked."""
+        op = self.get(key)
+        if op is None:
+            raise OperatorError("not_found")
+        sets, args = [], []
+        if name is not None:
+            if not name.strip():
+                raise OperatorError("bad_name")
+            sets.append("name = ?")
+            args.append(name.strip())
+        number = op.phone
+        if phone is not None:
+            number = normalize_phone(phone) if phone.strip() else None
+            if number is None and not op.linked:
+                raise OperatorError("bad_phone")  # an unregistered operator is known only by phone
+            if number is not None and len(number) - 1 < MIN_PHONE_DIGITS:
+                raise OperatorError("bad_phone")
+            sets.append("phone = ?")
+            args.append(number)
+        if not sets:
+            return op
+        column, value = self._where(key)
+        try:
+            with self._lock, self._db:
+                self._db.execute(f"UPDATE operators SET {', '.join(sets)}, updated_at = ? WHERE {column} = ?",
+                                 (*args, _now(), value))
+        except sqlite3.IntegrityError:
+            raise OperatorError("phone_taken") from None
+        return self.get(op.user_id or number)  # type: ignore[return-value]
+
+    def delete(self, key: str | int) -> None:
+        """Remove an operator from the list; their past replies and sessions stay in the history."""
+        column, value = self._where(key)
+        with self._lock, self._db:
+            cur = self._db.execute(f"DELETE FROM operators WHERE {column} = ?", (value,))
+        if not cur.rowcount:
+            raise OperatorError("not_found")
+
     def get(self, key: str | int) -> Operator | None:
         column, value = self._where(key)
         with self._lock:

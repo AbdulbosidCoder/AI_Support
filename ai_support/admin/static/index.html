@@ -45,6 +45,13 @@
   input { width: 100%; }
   .btn { background: var(--accent); color: var(--accent-text); border: 0; font-weight: 600; cursor: pointer; }
   .btn.ghost { background: var(--bg2); color: var(--text); }
+  .btn.danger { color: #d33f3f; }
+  .btn.danger.sure { background: #d33f3f; color: #fff; }
+  .acts { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+  .row .acts { flex: none; max-width: 46%; }
+  .row .acts .btn { padding: 6px 10px; font-size: 13px; }
+  form.edit { display: grid; gap: 8px; padding: 10px 12px 12px; border-bottom: 1px solid var(--line); background: var(--bg2); }
+  form.edit[hidden] { display: none; }
   form.add { display: grid; gap: 8px; background: var(--bg); padding: 12px; border-radius: 12px; margin-top: 10px; }
   h2 { font-size: 17px; margin: 16px 0 6px; }
   /* Statistics: one accent hue for every bar, values in text colors. */
@@ -149,6 +156,15 @@
   .bubble.audio .ph { background: none; min-height: 0; padding: 4px 4px 0; }
   @keyframes spin { to { transform: rotate(360deg); } }
   @media (prefers-reduced-motion: reduce) { .ph.loading::after { animation: none; } }
+  .dock { position: sticky; bottom: 0; z-index: 3; background: var(--bg); border-top: 1px solid var(--line);
+          padding-bottom: env(safe-area-inset-bottom, 0px); }
+  .composer { display: flex; gap: 8px; align-items: flex-end; padding: 8px 10px 4px; max-width: 760px; margin: 0 auto; }
+  .composer textarea { flex: 1; min-width: 0; resize: none; border: 0; outline: 0; background: var(--bg2); color: var(--text);
+              font: inherit; padding: 9px 12px; border-radius: 18px; max-height: 160px; }
+  .composer .send { flex: none; width: 40px; height: 40px; border-radius: 50%; border: 0; background: var(--accent);
+              color: var(--accent-text); font-size: 18px; cursor: pointer; }
+  .composer.busy .send { opacity: .5; }
+  .composer-note { color: var(--hint); font-size: 12px; padding: 0 14px 8px; max-width: 760px; margin: 0 auto; }
   .viewer { position: fixed; inset: 0; z-index: 10; background: rgba(0, 0, 0, .92); display: grid; place-items: center;
             cursor: zoom-out; }
   .viewer img { max-width: 100vw; max-height: 100vh; object-fit: contain; }
@@ -179,6 +195,8 @@ const when = iso => { if (!iso) return ""; const d = new Date(iso);
 const LANG = {uz_latn: "uz", uz_cyrl: "уз", ru: "ru", en: "en"};
 const WHO = {client: "Клиент", bot: "🤖 Бот", operator: "👨‍💼 Оператор"};
 const KIND = {photo: "📷 Фото", voice: "🎤 Голос", audio: "🎵 Аудио", document: "📎 Файл"};
+
+const notify = msg => (tg && tg.showAlert ? tg.showAlert(msg) : alert(msg));
 
 async function api(path, options = {}) {
   const res = await fetch(path, {...options, headers: {"Content-Type": "application/json",
@@ -385,10 +403,16 @@ function bubble(m, prev, next) {
 async function session(id) {
   document.body.classList.add("in-chat");
   let shown = "";
+  view.innerHTML = `<div class="tgchat"><div class="tgbar" id="bar"></div><div class="tgmsgs" id="msgs"></div>
+    <div class="dock"><form class="composer" id="composer">
+      <textarea id="reply" rows="1" maxlength="4000" placeholder="Ответить клиенту…" aria-label="Ответ клиенту"></textarea>
+      <button class="send" aria-label="Отправить" title="Отправить">➤</button>
+    </form>
+    <div class="composer-note" id="note"></div></div></div>`;
   const render = async () => {
     const s = await api(`/api/sessions/${encodeURIComponent(id)}`);
     const sig = s.status + s.messages.length + ":" + (s.messages.at(-1) || {}).id;
-    if (sig === shown) return s;  // nothing new: keep loaded photos and the scroll position
+    if (sig === shown) return s;  // nothing new: keep loaded photos, the draft and the scroll position
     const firstRender = !shown;
     shown = sig;
     const rows = [];
@@ -399,21 +423,44 @@ async function session(id) {
     const who = sessionWho(s);
     const live = s.status === "open";
     const stillAtBottom = innerHeight + scrollY >= document.body.scrollHeight - 80;
-    view.innerHTML = `<div class="tgchat">
-      <div class="tgbar"><button class="back" onclick="history.back()" aria-label="Назад">‹</button>
+    document.getElementById("bar").innerHTML = `<button class="back" onclick="history.back()" aria-label="Назад">‹</button>
         <div class="avatar" style="background:${AVATAR[Math.abs(parseInt(s.client_id, 10) || 0) % AVATAR.length]}">${esc(initials(s.client_name))}</div>
         <div class="who" onclick="location.hash='client=${esc(s.client_id)}'" title="Все сессии клиента">
           <b>${esc(s.client_name)}</b>
           <span class="${live ? "live" : ""}">${live ? "открыта" : "завершена"} · ${esc(who)} · ${esc(s.topic || "без темы")} · ${esc(LANG[s.language] || s.language || "")}${s.rating ? ` · ${s.rating.stars}★` : ""}</span>
           <span>${[s.client_username ? "@" + s.client_username : "", s.client_phone || "", "сессия #" + s.id].filter(Boolean).map(esc).join(" · ")}</span>
-        </div></div>
-      <div class="tgmsgs">${rows.join("") || '<div class="service">Сообщений нет</div>'}</div></div>`;
-    fillMedia(view);
+        </div>`;
+    const msgs = document.getElementById("msgs");
+    msgs.innerHTML = rows.join("") || '<div class="service">Сообщений нет</div>';
+    fillMedia(msgs);
+    document.getElementById("note").textContent = live
+      ? "Клиент получит ответ от имени «Специалист поддержки», копия уйдёт в чат поддержки."
+      : "Сессия завершена: ответ откроет клиенту новый разговор.";
     if (firstRender || stillAtBottom) scrollTo(0, document.body.scrollHeight);
     return s;
   };
-  const s = await render();
-  if (s.status === "open") timer = setInterval(() => render().catch(fail), 5000);
+  const box = document.getElementById("reply"), form = document.getElementById("composer");
+  const grow = () => { box.style.height = "auto"; box.style.height = Math.min(box.scrollHeight, 160) + "px"; };
+  box.oninput = grow;
+  box.onkeydown = e => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) form.requestSubmit(); };
+  form.onsubmit = async e => {
+    e.preventDefault();
+    const text = box.value.trim();
+    if (!text || form.classList.contains("busy")) return;
+    form.classList.add("busy");
+    try {
+      const res = await api(`/api/sessions/${encodeURIComponent(id)}/reply`, {method: "POST", body: JSON.stringify({text})});
+      box.value = ""; grow();
+      if (String(res.session_id) !== String(id)) { location.hash = "session=" + res.session_id; return; }
+      await render();
+      scrollTo(0, document.body.scrollHeight);
+    } catch (err) {
+      notify(err.status === 502 ? "Не удалось отправить: клиент заблокировал бота или нет токена клиентского бота."
+        : "Не удалось отправить: " + err.message);
+    } finally { form.classList.remove("busy"); }
+  };
+  await render();
+  timer = setInterval(() => render().catch(fail), 5000);
 }
 
 async function operators() {
@@ -432,20 +479,57 @@ async function operators() {
         <div class="muted">${o.registered && !o.linked ? '<span class="pill">ждём регистрации в боте</span> ' : ""}${o.busy ? '<span class="pill">занят с клиентом</span> ' : ""}${[o.phone, o.user_id ? "id " + o.user_id : ""].filter(Boolean).map(esc).join(" · ")} · ответов ${o.replies} · сессий ${o.sessions} (открыто ${o.sessions_open})
           · ${o.rating !== null ? o.rating + "★ (" + o.ratings + ")" : "оценок нет"}
           ${o.last_reply ? " · последний ответ " + when(o.last_reply) : ""}</div></div>
-      <button class="btn ghost" data-id="${esc(o.key)}" data-name="${esc(o.name)}"
-        data-act="${o.registered ? (o.active ? "off" : "on") : "add"}">${o.registered ? (o.active ? "Отключить" : "Включить") : "Добавить"}</button>
-    </div>`).join("") || '<div class="empty">Операторов пока нет</div>'}</div>`;
+      <div class="acts">${o.admin && !o.registered ? '<span class="pill">админ</span>' : `
+        <button class="btn ghost" data-id="${esc(o.key)}" data-name="${esc(o.name)}"
+          data-act="${o.registered ? (o.active ? "off" : "on") : "add"}">${o.registered ? (o.active ? "Отключить" : "Включить") : "Добавить"}</button>
+        ${o.registered ? `<button class="btn ghost" data-edit="${esc(o.key)}">Изменить</button>
+        <button class="btn ghost danger" data-del="${esc(o.key)}">Удалить</button>` : ""}`}
+      </div>
+    </div>
+    ${o.registered ? `<form class="edit" data-key="${esc(o.key)}" hidden>
+      <input name="name" value="${esc(o.name)}" placeholder="Имя" required aria-label="Имя">
+      <input name="phone" value="${esc(o.phone || "")}" inputmode="tel" placeholder="Телефон: +998 90 123 45 67" aria-label="Телефон">
+      <div class="acts"><button class="btn">Сохранить</button><button type="button" class="btn ghost" data-cancel>Отмена</button></div>
+    </form>` : ""}`).join("") || '<div class="empty">Операторов пока нет</div>'}</div>`;
   document.getElementById("add").onsubmit = async e => {
     e.preventDefault();
     const f = new FormData(e.target);
     await api("/api/operators", {method: "POST", body: JSON.stringify(Object.fromEntries(f))}).catch(err =>
-      alert({bad_id: "Telegram id — это число", bad_phone: "Проверьте номер телефона"}[err.message] || err.message));
+      notify({bad_id: "Telegram id — это число", bad_phone: "Проверьте номер телефона"}[err.message] || err.message));
     operators().catch(fail);
   };
   view.querySelectorAll("button[data-act]").forEach(b => b.onclick = async () => {
     const id = b.dataset.id;
     if (b.dataset.act === "add") await api("/api/operators", {method: "POST", body: JSON.stringify({user_id: id, name: b.dataset.name})});
     else await api(`/api/operators/${encodeURIComponent(id)}/active`, {method: "POST", body: JSON.stringify({active: b.dataset.act === "on"})});
+    operators().catch(fail);
+  });
+  const formFor = key => [...view.querySelectorAll("form.edit")].find(f => f.dataset.key === key);
+  view.querySelectorAll("button[data-edit]").forEach(b => b.onclick = () => {
+    const f = formFor(b.dataset.edit); f.hidden = !f.hidden; if (!f.hidden) f.elements.name.focus();
+  });
+  view.querySelectorAll("form.edit").forEach(f => {
+    f.querySelector("[data-cancel]").onclick = () => { f.hidden = true; };
+    f.onsubmit = async e => {
+      e.preventDefault();
+      const body = {name: f.elements.name.value, phone: f.elements.phone.value};
+      try {
+        await api(`/api/operators/${encodeURIComponent(f.dataset.key)}`, {method: "PATCH", body: JSON.stringify(body)});
+        operators().catch(fail);
+      } catch (err) {
+        notify({bad_phone: "Проверьте номер телефона", phone_taken: "Этот номер уже у другого оператора",
+                bad_name: "Укажите имя"}[err.message] || "Не сохранено: " + err.message);
+      }
+    };
+  });
+  // Delete takes two taps: the first one asks, the second one deletes.
+  view.querySelectorAll("button[data-del]").forEach(b => b.onclick = async () => {
+    if (!b.classList.contains("sure")) {
+      b.classList.add("sure"); b.textContent = "Точно удалить?";
+      setTimeout(() => { b.classList.remove("sure"); b.textContent = "Удалить"; }, 4000);
+      return;
+    }
+    await api(`/api/operators/${encodeURIComponent(b.dataset.del)}`, {method: "DELETE"}).catch(err => notify("Не удалено: " + err.message));
     operators().catch(fail);
   });
 }
