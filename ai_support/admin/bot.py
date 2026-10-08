@@ -165,8 +165,9 @@ def support_view(data: AdminData, admin: bool) -> tuple[str, InlineKeyboardMarku
 def dialog_text(data: AdminData, client_id: str) -> str:
     target = data.client_target(client_id)
     name = target["client_name"] if target else client_id
-    lines = [f"💬 {name}", ""]
-    for m in data.recent_messages(client_id):
+    messages, closed = data.current_messages(client_id)
+    lines = [f"💬 {name}" + (" · разговор завершён" if closed else ""), ""]
+    for m in messages:
         body = (m["text"] or ("[файл]" if m["files"] else "")).strip()
         if len(body) > 300:
             body = body[:300] + "…"
@@ -175,7 +176,7 @@ def dialog_text(data: AdminData, client_id: str) -> str:
         lines.append(f"{who}: {body}" if m["sender"] != SYSTEM else f"· {body}")
     if len(lines) == 2:
         lines.append("Сообщений пока нет.")
-    lines += ["", DIALOG_HELP]
+    lines += ["", "Если написать клиенту, начнётся новый разговор. " + DIALOG_HELP if closed else DIALOG_HELP]
     text = "\n".join(lines)
     return text if len(text) <= 4096 else "…" + text[-4000:]
 

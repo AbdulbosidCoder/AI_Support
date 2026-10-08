@@ -634,6 +634,7 @@ class TelegramSupportBot:
         if not ai_first and await self._operator_first(message, bot, [], question, lang, from_user):
             return
         await bot.send_chat_action(message.chat.id, ChatAction.TYPING)
+        self._fresh_start(chat_id)
         reply = await self.engine.handle(IncomingMessage(user_id=str(message.chat.id), text=question))
         await self._deliver(message, bot, reply, from_user)
 
@@ -740,12 +741,35 @@ class TelegramSupportBot:
                                                        client_kind=message_kind(first), files=media_files(messages)):
             return
         await bot.send_chat_action(first.chat.id, ChatAction.TYPING)
+        self._fresh_start(client_id)
         msg = await self.to_incoming(messages, bot)
         msg.language = user.language if user else None
         reply = await self.engine.handle(msg)
         await self._deliver(first, bot, reply, client_kind=message_kind(first), files=media_files(messages))
         if opens_conversation(reply):
             self._ai_first.discard(client_id)
+
+    def _fresh_start(self, client_id: str) -> None:
+        """No open conversation: whatever the model remembers belongs to a closed one (it may have been closed
+        from the admin bot or panel, in another process), so the new conversation starts without it."""
+        if self.feedback.conversation(CHANNEL, client_id) is None:
+            self.engine.end_conversation(client_id)
+
+    async def _transcribe(self, bot: Bot, client_id: str, messages: list[Message], text: str) -> str:
+        """The text of the client's voice messages, so the staff can read them and the session log keeps them."""
+        spoken = []
+        for m in messages:
+            obj = m.voice or m.audio
+            if obj is None:
+                continue
+            audio = Audio(await self._download(bot, obj), obj.mime_type or "audio/ogg",
+                          getattr(obj, "file_name", None) or "voice.ogg")
+            try:
+                spoken.append(await self.engine.transcribe(client_id, audio, text))
+            except Exception as e:  # noqa: BLE001 - STT off or failing: the staff still get the recording
+                log.warning("voice for staff not transcribed: %s", e)
+                self._log(client_id, LOG_SYSTEM, f"Голосовое не распознано: {e}")
+        return "\n".join(x for x in (text, *(f"🎤 {x}" for x in spoken)) if x)
 
     async def _with_operator(self, first: Message, bot: Bot, messages: list[Message], text: str) -> bool:
         """While a person handles the conversation, the client's messages go to them, not to the model."""
@@ -764,6 +788,8 @@ class TelegramSupportBot:
             # Someone answered (maybe from the admin bot or panel): nothing waits for the AI any more.
             self._pending.pop(client_id, None)
         kind = message_kind(messages[0]) if messages else "text"
+        if any(m.voice or m.audio for m in messages):
+            text = await self._transcribe(bot, client_id, messages, text)
         masked = mask_pii(text)
         self._log(client_id, LOG_CLIENT, masked or MEDIA_PLACEHOLDER[kind], kind, conversation.id, handoff.id,
                   files=media_files(messages))
@@ -977,6 +1003,8 @@ class TelegramSupportBot:
         if log_client and (reply.client_text or client_kind != "text"):
             self._log(client_id, LOG_CLIENT, reply.client_text or MEDIA_PLACEHOLDER[client_kind], client_kind,
                       conversation_id, handoff_id, files=files)
+        if reply.note:
+            self._log(client_id, LOG_SYSTEM, reply.note, "text", conversation_id, handoff_id)
         self._log(client_id, LOG_BOT, reply.text, "text", conversation_id, handoff_id)
         if handoff_id is not None:
             self._log(client_id, LOG_SYSTEM, f"Передано специалисту: {reply.escalation_reason or '-'}", "text",

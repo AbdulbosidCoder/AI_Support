@@ -476,9 +476,25 @@ class AdminData:
                 "language": registered.lang.value if registered else Lang.UZ_LATN.value, "topic": "",
                 "status": "closed", "handoff": None, "last_client_text": ""}
 
-    def recent_messages(self, client_id: str, limit: int = 12, channel: str = "telegram") -> list[dict]:
-        """The client's latest messages (client, AI, staff), oldest first, for the dialog in the admin bot."""
-        return [_chat(m.__dict__) for m in self.chatlog.for_client(channel, client_id, limit)]
+    def current_messages(self, client_id: str, limit: int = 15, channel: str = "telegram") -> tuple[list[dict], bool]:
+        """The client's current session for the dialog in the admin bot: (latest messages oldest first, closed).
+
+        A closed session stays closed: what the client wrote after it is a new session, and the dialog shows
+        only that. With nothing new since the close, it shows the closed session (closed=True).
+        """
+        last = self._one("""SELECT id, closed_at FROM conversations WHERE channel = ? AND client_id = ?
+                            AND closed_at IS NOT NULL ORDER BY closed_at DESC, id DESC LIMIT 1""", (channel, client_id))
+        current = self.feedback.conversation(channel, client_id)
+        rows = self._all(
+            """SELECT * FROM chat_messages WHERE channel = ? AND client_id = ?
+               AND (conversation_id = ? OR (conversation_id IS NULL AND created_at >= ?))
+               ORDER BY id DESC LIMIT ?""",
+            (channel, client_id, current.id if current else -1, last["closed_at"] if last else "", max(1, limit)))
+        if not rows and current is None and last is not None:
+            rows = self._all("SELECT * FROM chat_messages WHERE conversation_id = ? ORDER BY id DESC LIMIT ?",
+                             (last["id"], max(1, limit)))
+            return [_chat(dict(r)) for r in reversed(rows)], True
+        return [_chat(dict(r)) for r in reversed(rows)], False
 
     def close(self) -> None:
         for store in (self.users, self.handoffs, self.feedback, self.chatlog, self.operators):

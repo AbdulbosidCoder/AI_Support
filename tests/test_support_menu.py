@@ -266,3 +266,82 @@ def test_prompt_keeps_the_human_tone_and_never_claims_to_be_human():
     assert "сотрудник службы поддержки" in RULES
     assert "Никогда не упоминай искусственный интеллект" in RULES
     assert "никогда не утверждай, что ты человек" in RULES
+
+
+# --- voice messages and closed sessions ------------------------------------------------------------
+
+class VoiceChat(ClientChat):
+    async def download(self, file, destination=None):
+        import io
+        return io.BytesIO(b"ogg")
+
+
+def voice_msg(chat, uid=7):
+    msg = client_msg(chat, None, uid)
+    msg.voice = NS(file_id="v1", file_size=3, mime_type="audio/ogg", duration=2)
+    return msg
+
+
+def voice_bot(llm, stt, admin_api):
+    bot = client_bot(llm, admin_api)
+    bot.engine = SupportEngine(llm, stt)
+    return bot
+
+
+def test_voice_while_with_a_person_is_transcribed_for_staff_and_the_log():
+    llm = FakeLLM(answer("Uzatyapman.", "uz_latn", escalate=True, reason="x"))
+    admin_api, chat = FakeTelegram(), VoiceChat()
+    bot = voice_bot(llm, FakeSTT("Pulim qaytmadi"), admin_api)
+    asyncio.run(bot.on_client_message(client_msg(chat, "Pulimni qaytaring"), chat))
+    asyncio.run(bot.on_client_message(voice_msg(chat), chat))
+    assert len(llm.calls) == 1  # the person handles it, not the model
+    assert "🎤 Pulim qaytmadi" in admin_api.to(ADMIN)[-1]["text"]
+    assert bot.chatlog.for_client("telegram", "7")[-1].text == "🎤 Pulim qaytmadi"
+
+
+def test_voice_the_ai_cannot_recognise_logs_why_for_the_staff_only():
+    chat = VoiceChat()
+    bot = voice_bot(FakeLLM(), FakeSTT(None), FakeTelegram())
+    asyncio.run(bot.on_client_message(voice_msg(chat), chat))
+    log = [(m.sender, m.text) for m in bot.chatlog.for_client("telegram", "7")]
+    assert ("system", "Голосовое не распознано: disabled") in log
+    assert all("disabled" not in text for text, _ in chat.sent)  # the client never sees the reason
+
+
+def test_voice_the_ai_recognises_is_saved_as_text():
+    chat = VoiceChat()
+    llm = FakeLLM(answer("Kartalarim bo'limiga kiring.", "uz_latn", topic="add_card"))
+    bot = voice_bot(llm, FakeSTT("Karta qo'shilmayapti"), FakeTelegram())
+    asyncio.run(bot.on_client_message(voice_msg(chat), chat))
+    assert ("client", "Karta qo'shilmayapti") in [(m.sender, m.text) for m in bot.chatlog.for_client("telegram", "7")]
+
+
+def test_conversation_closed_elsewhere_starts_the_next_one_without_old_context():
+    llm = FakeLLM(answer("Kartalarim bo'limiga kiring.", "uz_latn", topic="add_card"))
+    chat = ClientChat()
+    bot = client_bot(llm, FakeTelegram())
+    asyncio.run(bot.on_client_message(client_msg(chat, "Karta qo'shilmayapti"), chat))
+    bot.feedback.end("telegram", "7", "operator")  # closed from the admin bot, another process
+    asyncio.run(bot.on_client_message(client_msg(chat, "SMS kelmayapti"), chat))
+    assert llm.calls[-1][0] == []  # no history from the closed conversation
+
+
+def test_dialog_shows_only_the_current_session(tmp_path):
+    db = tmp_path / "bot.sqlite3"
+    waiting_client(db)
+    client = FakeTelegram()
+    bot, data = admin_bot(db, client)
+    staff = StaffChat()
+    cb, _ = staff.callback(ADMIN, "a:close:7")
+    asyncio.run(bot.on_callback(cb))
+    # Nothing new: the closed session is shown, marked as finished.
+    messages, closed = data.current_messages("7")
+    assert closed and "Pulimni qaytaring" in [m["text"] for m in messages]
+    assert "разговор завершён" in dialog_text(data, "7")
+    # The client writes again: a new session, without the old messages.
+    feedback, log = FeedbackStore(db), ChatLog(db)
+    conv = feedback.bot_answered("telegram", "7", "uz_latn", "cards")
+    log.add("telegram", "7", "client", "Karta qo'shilmayapti", conversation_id=conv.id)
+    messages, closed = data.current_messages("7")
+    assert not closed and [m["text"] for m in messages] == ["Karta qo'shilmayapti"]
+    assert "Pulimni qaytaring" not in dialog_text(data, "7")

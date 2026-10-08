@@ -10,7 +10,7 @@ from .feedback import Assessment
 from .images import MAX_IMAGES_PER_MESSAGE, prepare_image
 from .language import detect_language, is_small_talk
 from .llm import LLMError, ModelAnswer, SupportLLM, Turn
-from .models import BotReply, IncomingMessage, Lang
+from .models import Audio, BotReply, IncomingMessage, Lang
 from .pii import mask_pii
 from .stt import SpeechToText, STTError
 from .templates import strip_emoji, t
@@ -114,6 +114,18 @@ class SupportEngine:
         lang = self._store.language(user_id) or default
         return BotReply(t("handoff", lang), lang, escalate=True, escalation_reason="client asked for an operator")
 
+    def _voice_language(self, user_id: str, caption: str, channel_lang: Lang | None) -> Lang | None:
+        # Hint the recogniser with the caption's language, else the client's: Uzbek is misheard without it.
+        known = self._store.language(user_id) or channel_lang
+        return detect_language(caption, default=known) if caption.strip() else known
+
+    async def transcribe(self, user_id: str, audio: Audio, caption: str = "", language: Lang | None = None) -> str:
+        """A voice message as text, without answering it (e.g. while a person handles the conversation).
+
+        Raises STTError if it cannot be recognised.
+        """
+        return await self._stt.transcribe(audio, self._voice_language(user_id, caption, language))
+
     async def handle(self, msg: IncomingMessage) -> BotReply:
         # The language the client last wrote in, else the one they chose in the channel.
         known_lang = self._store.language(msg.user_id) or msg.language
@@ -121,14 +133,14 @@ class SupportEngine:
         voice_lang: Lang | None = None
 
         if msg.audio is not None:
-            # Hint the recogniser with the caption's language, else the client's: Uzbek is misheard without it.
-            voice_lang = detect_language(text, default=known_lang) if text.strip() else known_lang
+            voice_lang = self._voice_language(msg.user_id, text, msg.language)
             try:
                 spoken = await self._stt.transcribe(msg.audio, voice_lang)
             except STTError as e:
                 log.warning("stt failed: %s", e)
                 lang = known_lang or detect_language(text)
-                return BotReply(t("voice_unavailable", lang), lang)
+                return BotReply(t("voice_unavailable", lang), lang, client_text=mask_pii(text),
+                                note=f"Голосовое не распознано: {e}")
             text = f"{text}\n{spoken}".strip()
 
         images = [img for img in (prepare_image(i.data) for i in msg.images[:MAX_IMAGES_PER_MESSAGE]) if img]
