@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>AI Support · чаты</title>
+<link rel="stylesheet" href="/crm/crm.css">
+<script src="/crm/crm.js" defer></script>
+</head>
+<body>
+<header>
+  <b>AI Support</b>
+  <span class="ro">Только просмотр</span>
+  <select id="status" aria-label="Статус">
+    <option value="">Все сессии</option>
+    <option value="open">Открытые</option>
+    <option value="closed">Закрытые</option>
+  </select>
+  <span id="who" class="muted"></span>
+</header>
+<div id="error" class="error" hidden></div>
+<main id="main">
+  <section id="list" class="list" aria-label="Сессии"></section>
+  <section id="chat" class="chat" aria-label="Чат"><p class="muted center">Выберите сессию слева</p></section>
+</main>
+</body>
+</html>
