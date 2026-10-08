@@ -260,15 +260,55 @@ def test_quick_question_forbidden_answer_replaced():
     assert chat.sent[-1][0] == said(t("guardrail", Lang.UZ_LATN))
 
 
-def test_operator_button_hands_off_in_chosen_language():
+def test_operator_button_asks_the_question_first_then_hands_off_in_chosen_language():
     llm = FakeLLM()
     bot, users = make_bot(llm)
     chat = Chat()
     users.set_language("telegram", "42", Lang.EN)
     asyncio.run(bot.on_client_message(client_msg(chat, OPERATOR_LABEL[Lang.EN]), chat))  # old keyboard label
-    assert chat.sent[-1][0] == said(t("handoff", Lang.EN), Lang.EN) and not llm.calls
+    assert chat.sent[-1][0] == t("operator_ai_first", Lang.EN) and not llm.calls
+    # Asked again without a question: the client really wants a person.
     asyncio.run(bot.on_operator_button(callback(chat, "op"), chat))
     assert chat.sent[-1][0] == said(t("handoff", Lang.EN), Lang.EN) and not llm.calls
+
+
+def test_after_operator_request_the_ai_answers_first_and_offers_a_specialist():
+    llm = FakeLLM(answer("Open «Kartalarim» and tap «+».", "en", topic="add_card"))
+    bot, users = make_bot(llm)
+    chat = Chat()
+    users.set_language("telegram", "42", Lang.EN)
+    asyncio.run(bot.on_client_message(client_msg(chat, "operator kerak"), chat))  # typed, not the button
+    assert chat.sent[-1][0] == t("operator_ai_first", Lang.EN) and not llm.calls
+    asyncio.run(bot.on_client_message(client_msg(chat, "How do I add a card?"), chat))
+    text, kb = chat.sent[-1]
+    assert llm.calls and text == said("Open «Kartalarim» and tap «+».", Lang.EN)
+    assert [b.callback_data for row in kb.inline_keyboard for b in row] == ["end", "menu", "op"]
+    # The answer did not help: now the client goes to a specialist.
+    asyncio.run(bot.on_operator_button(callback(chat, "op"), chat))
+    assert chat.sent[-1][0] == said(t("handoff", Lang.EN), Lang.EN) and len(llm.calls) == 1
+
+
+def test_after_operator_request_a_question_the_ai_cannot_answer_goes_to_a_specialist():
+    llm = FakeLLM(answer("I am passing this to a specialist.", "en", escalate=True, reason="no answer in KB",
+                         topic="other"))
+    bot, users = make_bot(llm)
+    chat = Chat()
+    users.set_language("telegram", "42", Lang.EN)
+    asyncio.run(bot.on_operator_button(callback(chat, "op"), chat))
+    asyncio.run(bot.on_client_message(client_msg(chat, "My salary card shows a strange fee"), chat))
+    text, kb = chat.sent[-1]
+    assert llm.calls and t("handoff", Lang.EN) in text
+    assert "op" not in [b.callback_data for row in kb.inline_keyboard for b in row]
+    assert bot.feedback.conversation("telegram", "42").handoff_id is None  # no support chat in this test
+
+
+def test_operator_request_detection():
+    from ai_support.language import asks_for_operator
+    for text in ("operator kerak", "Оператор", "соедините с оператором", "operatorga ulang", "I need a human",
+                 "мутахассис керак"):
+        assert asks_for_operator(text), text
+    for text in ("Karta qo'shilmayapti", "Salom", "", "Operator kartamdan 50 000 so'm yechib oldi, nega bunday bo'ldi?"):
+        assert not asks_for_operator(text), text
 
 
 def test_any_message_registers_user():

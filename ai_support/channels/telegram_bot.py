@@ -74,11 +74,11 @@ from ..feedback import (
 )
 from ..guides import Guide, GuideStore, guide_text
 from ..handoffs import WAITING, WITH_AI, Candidate, Handoff, HandoffStore, ReviewError
-from ..language import is_small_talk
+from ..language import asks_for_operator, is_small_talk
 from ..llm import Turn
 from ..menu import (
     CHANGE_LANGUAGE_LABEL, CHANGE_PHONE_LABEL, CHOOSE_LANGUAGE, END_LABEL, LANGUAGE_CHOICES, MENU_LABEL, OPERATOR_LABEL,
-    BACK_LABEL, CATEGORIES, SETTINGS_LABEL, category, match_menu,
+    BACK_LABEL, CATEGORIES, SETTINGS_LABEL, STILL_OPERATOR_LABEL, category, match_menu,
 )
 from ..models import Audio, BotReply, Image, IncomingMessage, Lang, VideoAttachment
 from ..operators import Operator, OperatorStore, pick_free
@@ -166,12 +166,18 @@ def settings_keyboard(lang: Lang) -> InlineKeyboardMarkup:
     ])
 
 
-def end_keyboard(lang: Lang) -> InlineKeyboardMarkup:
-    """Under answers in an open conversation: end it (then rate it) or go back to the menu."""
-    return InlineKeyboardMarkup(inline_keyboard=[[
+def end_keyboard(lang: Lang, operator: bool = False) -> InlineKeyboardMarkup:
+    """Under answers in an open conversation: end it (then rate it) or go back to the menu.
+
+    With `operator`, also "I need a specialist": the client asked for a person and the AI answered first.
+    """
+    rows = [[
         InlineKeyboardButton(text=END_LABEL[lang], callback_data="end"),
         InlineKeyboardButton(text=MENU_LABEL[lang], callback_data="menu"),
-    ]])
+    ]]
+    if operator:
+        rows.append([InlineKeyboardButton(text=STILL_OPERATOR_LABEL[lang], callback_data="op")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def rating_keyboard(request: RatingRequest, lang: Lang) -> InlineKeyboardMarkup:
@@ -310,6 +316,9 @@ class TelegramSupportBot:
         # Client chat -> what the client sent while waiting for their operator: (message to answer, the
         # client's messages, text). If the AI takes over, it answers this. Lost on restart: then it just asks.
         self._pending: dict[str, list[tuple[Message, list[Message], str]]] = {}
+        # Client chats that asked for a person before saying what the problem is: the AI tries to answer
+        # their next question first and connects a specialist only if it cannot help. Lost on restart.
+        self._ai_first: set[str] = set()
         self.router = Router()
         self._register()
 
@@ -585,22 +594,24 @@ class TelegramSupportBot:
             await message.answer(asked)
         if await self._with_operator(message, bot, [], question):
             return
+        ai_first = chat_id in self._ai_first
+        self._ai_first.discard(chat_id)
         found = self.guides.answer(q.id, lang)
         if found is not None:
             # The admin wrote this answer: no model and no wait for an operator, the client can still ask one.
-            await self._send_guide(message, bot, q, *found, question, from_user)
+            await self._send_guide(message, bot, q, *found, question, from_user, offer_operator=ai_first)
             return
-        if await self._operator_first(message, bot, [], question, lang, from_user):
+        if not ai_first and await self._operator_first(message, bot, [], question, lang, from_user):
             return
         await bot.send_chat_action(message.chat.id, ChatAction.TYPING)
         reply = await self.engine.handle(IncomingMessage(user_id=str(message.chat.id), text=question))
-        await self._deliver(message, bot, reply, from_user)
+        await self._deliver(message, bot, reply, from_user, offer_operator=ai_first)
 
     async def _send_guide(self, message: Message, bot: Bot, q, guide: Guide, lang: Lang, question: str,
-                          from_user=None) -> None:
+                          from_user=None, offer_operator: bool = False) -> None:
         """A quick question's guide: the text and steps, then the screenshots as one album."""
         reply = BotReply(guide_text(guide, lang), lang, topic=q.id, client_text=question)
-        await self._deliver(message, bot, reply, from_user)
+        await self._deliver(message, bot, reply, from_user, offer_operator=offer_operator)
         await self._send_guide_images(message, guide)
 
     async def _send_guide_images(self, message: Message, guide: Guide) -> None:
@@ -638,6 +649,16 @@ class TelegramSupportBot:
             lang = _lang(conversation.language)
             await self._reply_buttons(message, t("with_operator", lang), end_keyboard(lang), bot=bot)
             return
+        if conversation is None and chat_id not in self._ai_first:
+            # Nothing asked yet: the AI answers the question first, a specialist only if it cannot help.
+            self._ai_first.add(chat_id)
+            self._log(chat_id, LOG_SYSTEM, "Клиент попросил оператора: сначала отвечает AI")
+            await self._reply_buttons(message, t("operator_ai_first", user.lang),
+                                      InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
+                                          text=MENU_LABEL[user.lang], callback_data="menu")]]), bot=bot)
+            return
+        # The AI already answered and the client still wants a person (or asks a second time): connect them.
+        self._ai_first.discard(chat_id)
         self._log(chat_id, LOG_SYSTEM, "Клиент попросил оператора")
         await self._deliver(message, bot, self.engine.handoff(chat_id, user.lang), from_user)
 
@@ -651,6 +672,11 @@ class TelegramSupportBot:
         if action is not None:
             # A button of the old reply keyboard, still on the client's screen.
             await self._on_menu(message, bot, user, action)
+            return
+        if (message.text and asks_for_operator(message.text) and not message.photo
+                and not await self._with_operator(message, bot, [message], message.text)):
+            # Typed "operator kerak": the same as the button.
+            await self._to_operator(message, bot, user, message.from_user)
             return
         if message.media_group_id:
             if self._albums is None:
@@ -680,13 +706,18 @@ class TelegramSupportBot:
         if await self._with_operator(first, bot, messages, text):
             return
         user = self.users.get(CHANNEL, str(first.from_user.id)) if getattr(first, "from_user", None) else None
-        if await self._operator_first(first, bot, messages, text, user.lang if user else Lang.UZ_LATN,
-                                      client_kind=message_kind(first), files=media_files(messages)):
+        client_id = str(first.chat.id)
+        ai_first = client_id in self._ai_first
+        if not ai_first and await self._operator_first(first, bot, messages, text, user.lang if user else Lang.UZ_LATN,
+                                                       client_kind=message_kind(first), files=media_files(messages)):
             return
         await bot.send_chat_action(first.chat.id, ChatAction.TYPING)
         msg = await self.to_incoming(messages, bot)
         reply = await self.engine.handle(msg)
-        await self._deliver(first, bot, reply, client_kind=message_kind(first), files=media_files(messages))
+        await self._deliver(first, bot, reply, client_kind=message_kind(first), files=media_files(messages),
+                            offer_operator=ai_first)
+        if opens_conversation(reply):
+            self._ai_first.discard(client_id)
 
     async def _with_operator(self, first: Message, bot: Bot, messages: list[Message], text: str) -> bool:
         """While a person handles the conversation, the client's messages go to them, not to the model."""
@@ -862,9 +893,12 @@ class TelegramSupportBot:
 
     async def _deliver(self, message: Message, bot: Bot, reply: BotReply, user=None, client_kind: str = "text",
                        files: list[str] = (), operator: Operator | None = None, wait: int | None = None,
-                       log_client: bool = True) -> None:
+                       log_client: bool = True, offer_operator: bool = False) -> None:
         opens = opens_conversation(reply)
-        markup = main_keyboard(reply.language) if reply.show_menu else (end_keyboard(reply.language) if opens else None)
+        # A client who asked for a person keeps a way to reach one if the AI's answer did not help.
+        offer_operator = offer_operator and opens and not reply.escalate
+        markup = main_keyboard(reply.language) if reply.show_menu else (
+            end_keyboard(reply.language, operator=offer_operator) if opens else None)
         # A real answer is signed, so the client always sees who is talking: the assistant or a person.
         text = f"{t('assistant_name', reply.language)}:\n{reply.text}" if opens else reply.text
         if markup is None:
