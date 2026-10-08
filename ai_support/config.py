@@ -22,6 +22,14 @@ class Settings:
     history_turns: int = 6
     # SQLite file with registered clients and their chosen language.
     db_path: Path = ROOT / "data" / "db" / "bot.sqlite3"
+    # A new conversation goes to a free operator first; the AI answers if nobody is free or the
+    # operator stays silent for operator_wait_seconds. Off, or with no operators added: the AI answers first.
+    operator_first: bool = True
+    operator_wait_seconds: int = 60
+    # Conversations one operator handles at once; with that many open they count as busy.
+    operator_max_sessions: int = 1
+    # A conversation nobody wrote in for this long no longer keeps its operator busy.
+    operator_idle_minutes: int = 30
     # Admin bot and its web panel (Telegram mini app), served through a Cloudflare Tunnel.
     admin_bot_token: str = ""
     # Telegram user ids allowed into the admin bot and panel.
@@ -44,6 +52,10 @@ class Settings:
             kb_dir=Path(os.getenv("KB_DIR", str(cls.kb_dir))),
             history_turns=int(os.getenv("HISTORY_TURNS", cls.history_turns)),
             db_path=Path(os.getenv("DB_PATH", str(cls.db_path))),
+            operator_first=os.getenv("OPERATOR_FIRST", "1").strip().lower() not in ("0", "false", "no", "off"),
+            operator_wait_seconds=int(os.getenv("OPERATOR_WAIT_SECONDS", cls.operator_wait_seconds)),
+            operator_max_sessions=max(1, int(os.getenv("OPERATOR_MAX_SESSIONS", cls.operator_max_sessions))),
+            operator_idle_minutes=int(os.getenv("OPERATOR_IDLE_MINUTES", cls.operator_idle_minutes)),
             admin_bot_token=os.getenv("ADMIN_BOT_TOKEN", ""),
             admin_ids=parse_ids(os.getenv("ADMIN_IDS", "")),
             admin_domain=os.getenv("ADMIN_DOMAIN", "").strip(),

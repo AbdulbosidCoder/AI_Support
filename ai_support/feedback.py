@@ -201,6 +201,17 @@ class FeedbackStore:
                              (handoff_id, language, row["id"]))
             return _conversation(self._db.execute("SELECT * FROM conversations WHERE id = ?", (row["id"],)).fetchone())
 
+    def release(self, handoff_id: int) -> Conversation | None:
+        """The operator did not answer in time: the open conversation goes back to the bot (rated as the bot's)."""
+        with self._lock, self._db:
+            row = self._db.execute(
+                "SELECT * FROM conversations WHERE handoff_id = ? AND status = ? ORDER BY id DESC LIMIT 1",
+                (handoff_id, OPEN)).fetchone()
+            if row is None:
+                return None
+            self._db.execute("UPDATE conversations SET handoff_id = NULL WHERE id = ?", (row["id"],))
+            return _conversation(self._db.execute("SELECT * FROM conversations WHERE id = ?", (row["id"],)).fetchone())
+
     def operator_replied(self, channel: str, client_id: str, handoff_id: int, language: str,
                          operator_id: str | None, operator_name: str | None) -> Conversation:
         """Remember who answered; a reply after the conversation ended opens it again."""

@@ -19,6 +19,8 @@ FORBIDDEN = [
     "The payment was successful.",
     "Мы разблокировали вашу карту.",
     "Kartangizni blokdan chiqardik.",
+    "Kartangiz blokdan chiqarildi.",
+    "Картангиз блокдан чиқарилди.",
     "We have unblocked your account.",
     "Ваш лимит увеличен до 50 млн.",
     "Limit oshirildi.",

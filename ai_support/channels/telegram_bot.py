@@ -27,6 +27,11 @@ linked to the conversation, so support staff can read sessions as chats.
 
 Once an admin added operators (ai_support/operators.py, admin bot) only they can answer clients.
 An admin adds an operator by phone; registering here with that phone links their Telegram id.
+
+Operator first: once operators are added, a new conversation goes to a free operator, mentioned in the
+support-chat post. If nobody is free, or the operator stays silent for OPERATOR_WAIT_SECONDS, the AI
+takes the conversation: it greets the client and answers what they asked meanwhile, or asks how it can
+help. A late operator reply still reaches the client and takes the conversation back.
 """
 from __future__ import annotations
 
@@ -39,6 +44,7 @@ from aiogram.enums import ChatAction
 from aiogram.filters import Command, CommandStart
 from aiogram.types import (
     BotCommand,
+    MessageEntity,
     BotCommandScopeChat,
     CallbackQuery,
     ForceReply,
@@ -51,6 +57,7 @@ from aiogram.types import (
     ReplyKeyboardMarkup,
     ReplyKeyboardRemove,
     URLInputFile,
+    User as TgUser,
 )
 
 from ..chatlog import BOT as LOG_BOT, CLIENT as LOG_CLIENT, OPERATOR as LOG_OPERATOR, SYSTEM as LOG_SYSTEM, ChatLog
@@ -61,13 +68,14 @@ from ..feedback import (
     BOT, OPERATOR, TONE_LABELS, TONES, Assessment, FeedbackStore, RatingError, RatingRequest, client_level,
     opens_conversation, render_assessment, render_rating,
 )
-from ..handoffs import Candidate, HandoffStore, ReviewError
+from ..handoffs import WAITING, WITH_AI, Candidate, Handoff, HandoffStore, ReviewError
+from ..language import is_small_talk
 from ..menu import (
     CHANGE_LANGUAGE_LABEL, CHANGE_PHONE_LABEL, CHOOSE_LANGUAGE, END_LABEL, LANGUAGE_CHOICES, MENU_LABEL, OPERATOR_LABEL,
     BACK_LABEL, CATEGORIES, SETTINGS_LABEL, category, match_menu, quick_question,
 )
 from ..models import Audio, BotReply, Image, IncomingMessage, Lang, VideoAttachment
-from ..operators import OperatorStore
+from ..operators import Operator, OperatorStore, pick_free
 from ..prompt import build_system_prompt
 from ..templates import t
 from ..pii import mask_pii
@@ -96,6 +104,7 @@ MEDIA_PLACEHOLDER = {"photo": "[фото]", "voice": "[голосовое соо
                      "document": "[файл]", "text": ""}
 OPERATOR_LINKED = ("Вы подключены как оператор поддержки Xonsaroy Pay. Отвечайте клиентам реплаем на "
                    "посты бота в чате поддержки — ваши ответы будут доходить до клиентов.")
+NEW_CONVERSATION_REASON = "новое обращение: сначала оператор"
 NOT_OPERATOR = ("Ответ не отправлен клиенту: вас нет в списке операторов. "
                 "Попросите администратора добавить вас в админ-боте.")
 
@@ -272,6 +281,9 @@ class TelegramSupportBot:
         self._buttons: dict[str, tuple[int, bool]] = {}
         # Instruction video id -> Telegram file_id of the copy uploaded by this bot.
         self._video_file_ids: dict[str, str] = {}
+        # Client chat -> what the client sent while waiting for their operator: (message to answer, the
+        # client's messages, text). If the AI takes over, it answers this. Lost on restart: then it just asks.
+        self._pending: dict[str, list[tuple[Message, list[Message], str]]] = {}
         self.router = Router()
         self._register()
 
@@ -542,6 +554,8 @@ class TelegramSupportBot:
             await message.answer(asked)
         if await self._with_operator(message, bot, [], question):
             return
+        if await self._operator_first(message, bot, [], question, lang, from_user):
+            return
         await bot.send_chat_action(message.chat.id, ChatAction.TYPING)
         reply = await self.engine.handle(IncomingMessage(user_id=str(message.chat.id), text=question))
         await self._deliver(message, bot, reply, from_user)
@@ -595,6 +609,10 @@ class TelegramSupportBot:
         text = "\n".join(x for x in (message_text(m) for m in messages) if x)
         if await self._with_operator(first, bot, messages, text):
             return
+        user = self.users.get(CHANNEL, str(first.from_user.id)) if getattr(first, "from_user", None) else None
+        if await self._operator_first(first, bot, messages, text, user.lang if user else Lang.UZ_LATN,
+                                      client_kind=message_kind(first), files=media_files(messages)):
+            return
         await bot.send_chat_action(first.chat.id, ChatAction.TYPING)
         msg = await self.to_incoming(messages, bot)
         reply = await self.engine.handle(msg)
@@ -610,6 +628,10 @@ class TelegramSupportBot:
         handoff = self.handoffs.get(conversation.handoff_id)
         if handoff is None:
             return False
+        self.handoffs.touch(handoff.id)
+        if handoff.status == WAITING:
+            # The operator has not answered yet: if the AI takes over, it answers this too.
+            self._pending.setdefault(client_id, []).append((first, list(messages), text))
         kind = message_kind(messages[0]) if messages else "text"
         masked = mask_pii(text)
         self._log(client_id, LOG_CLIENT, masked or MEDIA_PLACEHOLDER[kind], kind, conversation.id, handoff.id,
@@ -629,6 +651,113 @@ class TelegramSupportBot:
         except Exception:
             pass
         return True
+
+    # --- operator first: a new conversation goes to a free operator, else (or after a silence) to the AI ----
+
+    def operator_first_on(self) -> bool:
+        return (self.settings.operator_first and self.settings.support_chat_id is not None
+                and bool(self.operators.available()))
+
+    def free_operator(self) -> Operator | None:
+        operators = self.operators.available()
+        if not operators:
+            return None
+        return pick_free(operators, self.handoffs.busy_operators(self.settings.operator_idle_minutes),
+                         self.handoffs.last_assigned(), self.settings.operator_max_sessions)
+
+    async def _operator_first(self, message: Message, bot: Bot, messages: list[Message], text: str, lang: Lang,
+                              from_user=None, client_kind: str = "text", files: list[str] = ()) -> bool:
+        """A new conversation: connect a free operator and wait for them. False if the AI should answer now."""
+        client_id = str(message.chat.id)
+        if not self.operator_first_on() or self.feedback.conversation(CHANNEL, client_id) is not None:
+            return False
+        operator = self.free_operator()
+        if operator is None:
+            # Everyone is busy: the AI greets the client and takes the conversation.
+            self._log(client_id, LOG_SYSTEM, "Все операторы заняты — разговор ведёт AI")
+            return await self._ai_greets(bot, client_id, lang, text, messages, kind=client_kind, files=files)
+        reply = BotReply(t("connecting_operator", lang), lang, escalate=True,
+                         escalation_reason=NEW_CONVERSATION_REASON, client_text=mask_pii(text))
+        await self._deliver(message, bot, reply, from_user, client_kind, files, operator=operator,
+                            wait=self.settings.operator_wait_seconds)
+        self._pending[client_id] = [(message, list(messages), text)]
+        return True
+
+    async def _ai_greets(self, bot: Bot, client_id: str, lang: Lang, text: str, messages: list[Message],
+                         log_client: bool = True, kind: str = "text", files: list[str] = ()) -> bool:
+        """The AI takes the conversation and greets the client.
+
+        With nothing to answer yet (no question, only a greeting) it also asks how it can help and returns
+        True; otherwise the caller answers the question next.
+        """
+        conversation = self.feedback.bot_answered(CHANNEL, client_id, lang.value)
+        question = any(image_source(m) or m.voice or m.audio or m.document for m in messages) or (
+            bool(text.strip()) and not is_small_talk(text))
+        if not question:
+            if log_client and (text.strip() or kind != "text"):
+                self._log(client_id, LOG_CLIENT, mask_pii(text) or MEDIA_PLACEHOLDER[kind], kind, conversation.id,
+                          files=files)
+            greeting = f"{t('ai_takeover', lang)}\n\n{t('ai_how_help', lang)}"
+            await self._push_buttons(bot, client_id, f"{t('assistant_name', lang)}:\n{greeting}", main_keyboard(lang),
+                                     menu=True)
+            self._log(client_id, LOG_BOT, greeting, "text", conversation.id)
+            return True
+        await self._clear_buttons(client_id, bot)
+        await bot.send_message(int(client_id), f"{t('assistant_name', lang)}:\n{t('ai_takeover', lang)}")
+        self._log(client_id, LOG_BOT, t("ai_takeover", lang), "text", conversation.id)
+        return False
+
+    async def expire_waits(self, bot: Bot, now=None) -> int:
+        """Hand the conversations whose operator stayed silent to the AI; returns how many."""
+        taken = 0
+        for handoff in self.handoffs.due(now):
+            if not self.handoffs.to_ai(handoff.id):
+                continue
+            taken += 1
+            try:
+                await self._ai_takes_over(bot, handoff)
+            except Exception as e:  # noqa: BLE001 - one failed chat must not stop the others
+                log.warning("AI takeover of hand-off %s failed: %s", handoff.id, e)
+        return taken
+
+    async def _ai_takes_over(self, bot: Bot, handoff: Handoff) -> None:
+        client_id, lang = handoff.client_chat_id, _lang(handoff.language)
+        conversation = self.feedback.release(handoff.id)
+        pending = self._pending.pop(client_id, [])
+        if conversation is None:
+            return  # the client ended the conversation meanwhile
+        who = handoff.assigned_name or "Оператор"
+        self._log(client_id, LOG_SYSTEM, f"{who} не ответил за {self.settings.operator_wait_seconds} с — разговор ведёт AI",
+                  "text", conversation.id, handoff.id)
+        try:
+            await bot.send_message(
+                int(handoff.support_chat_id),
+                f"⏱ {who} не ответил за {self.settings.operator_wait_seconds} с — клиенту (эскалация #{handoff.id}) "
+                "отвечает AI. Ответьте реплаем на пост, чтобы забрать разговор.",
+                reply_to_message_id=int(handoff.support_message_id))
+        except Exception as e:  # noqa: BLE001 - the client still gets the AI
+            log.warning("timeout note not posted: %s", e)
+        # After a restart the waiting messages are gone: then the AI just asks how it can help.
+        reply_to = pending[0][0] if pending else None
+        messages = [m for _, ms, _ in pending for m in ms]
+        text = "\n".join(x for _, _, x in pending if x) if pending else ""
+        if await self._ai_greets(bot, client_id, lang, text, messages, log_client=False) or reply_to is None:
+            return
+        await bot.send_chat_action(int(client_id), ChatAction.TYPING)
+        msg = await self.to_incoming(messages, bot) if messages else IncomingMessage(user_id=client_id, text=text)
+        msg.user_id, msg.text = client_id, text or msg.text
+        self.engine.remember_language(client_id, lang)
+        reply = await self.engine.handle(msg)
+        await self._deliver(reply_to, bot, reply, log_client=False)
+
+    async def watch_waits(self, bot: Bot, every: float = 5.0) -> None:
+        """Runs with the bot: checks for silent operators every few seconds (survives restarts via the DB)."""
+        while True:
+            await asyncio.sleep(every)
+            try:
+                await self.expire_waits(bot)
+            except Exception as e:  # noqa: BLE001
+                log.warning("operator wait check failed: %s", e)
 
     async def to_incoming(self, messages: list[Message], bot: Bot) -> IncomingMessage:
         first = messages[0]
@@ -657,7 +786,8 @@ class TelegramSupportBot:
         return msg
 
     async def _deliver(self, message: Message, bot: Bot, reply: BotReply, user=None, client_kind: str = "text",
-                       files: list[str] = ()) -> None:
+                       files: list[str] = (), operator: Operator | None = None, wait: int | None = None,
+                       log_client: bool = True) -> None:
         opens = opens_conversation(reply)
         markup = main_keyboard(reply.language) if reply.show_menu else (end_keyboard(reply.language) if opens else None)
         # A real answer is signed, so the client always sees who is talking: the assistant or a person.
@@ -668,7 +798,7 @@ class TelegramSupportBot:
             await self._reply_buttons(message, text, markup, menu=reply.show_menu, bot=bot)
         await self._send_videos(message, reply)
         client_id = str(message.chat.id)
-        handoff_id = await self._escalate(message, bot, reply, user) if reply.escalate else None
+        handoff_id = await self._escalate(message, bot, reply, user, operator, wait) if reply.escalate else None
         if handoff_id is not None:
             # The conversation reached a person: the operator is rated for it, not the bot.
             conversation = self.feedback.escalated(CHANNEL, client_id, handoff_id, reply.language.value, reply.topic)
@@ -677,7 +807,7 @@ class TelegramSupportBot:
         else:
             conversation = self.feedback.conversation(CHANNEL, client_id)
         conversation_id = conversation.id if conversation else None
-        if reply.client_text or client_kind != "text":
+        if log_client and (reply.client_text or client_kind != "text"):
             self._log(client_id, LOG_CLIENT, reply.client_text or MEDIA_PLACEHOLDER[client_kind], client_kind,
                       conversation_id, handoff_id, files=files)
         self._log(client_id, LOG_BOT, reply.text, "text", conversation_id, handoff_id)
@@ -713,8 +843,13 @@ class TelegramSupportBot:
                 # Upload once: later clients get the same file by id.
                 self._video_file_ids[video.id] = sent.video.file_id
 
-    async def _escalate(self, message: Message, bot: Bot, reply: BotReply, user=None) -> int | None:
-        """Post the hand-off to the support chat; returns its id (None without a support chat)."""
+    async def _escalate(self, message: Message, bot: Bot, reply: BotReply, user=None, operator: Operator | None = None,
+                        wait: int | None = None) -> int | None:
+        """Post the hand-off to the support chat; returns its id (None without a support chat).
+
+        It goes to `operator`, or to a free one if there is any; with `wait` the AI takes over after that
+        many seconds of the operator's silence.
+        """
         chat = self.settings.support_chat_id
         if chat is None:
             log.warning("escalation without SUPPORT_CHAT_ID: chat=%s reason=%s", message.chat.id, reply.escalation_reason)
@@ -740,9 +875,18 @@ class TelegramSupportBot:
             "Ответьте реплаем на это сообщение — бот перешлёт ответ клиенту от имени специалиста поддержки. "
             "Новые сообщения клиента придут сюда же реплаями. Кнопки ниже: тон клиента, заметка, завершение разговора."
         )
-        posted = await bot.send_message(chat, summary[:4096], reply_markup=tone_keyboard())
+        operator = operator or self.free_operator()
+        entities = None
+        if operator is not None:
+            mention, entities = operator_mention(operator)
+            ask = (f"новое обращение. Ответьте в течение {wait} с, иначе клиенту ответит AI." if wait
+                   else "обращение назначено вам.")
+            summary = f"{mention}, {ask}\n\n{summary}"
+        posted = await bot.send_message(chat, summary[:4096], reply_markup=tone_keyboard(), entities=entities)
         handoff_id = self.handoffs.open(CHANNEL, client_id, str(chat), str(posted.message_id), reply,
                                         self.engine.recent_turns(client_id))
+        if operator is not None:
+            self.handoffs.assign(handoff_id, operator.user_id, operator.name, wait)
         if assessment is not None:
             self.feedback.assess(CHANNEL, client_id, "ai", assessment, handoff_id)
         if message.photo or message.voice or message.document or message.audio:
@@ -765,6 +909,12 @@ class TelegramSupportBot:
         await self._push_buttons(bot, handoff.client_chat_id, f"{t('operator_name', lang)}:\n{text}",
                                  end_keyboard(lang))
         operator_id, operator_name = (str(u.id), u.full_name) if u else (None, None)
+        # The conversation is this operator's now, also if they answered after the AI took it over.
+        self.handoffs.claim(handoff.id, operator_id, operator_name)
+        self._pending.pop(handoff.client_chat_id, None)
+        if handoff.status == WITH_AI:
+            self._log(handoff.client_chat_id, LOG_SYSTEM, f"{operator_name or 'Оператор'} забрал разговор у AI",
+                      "text", None, handoff.id)
         conversation = self.feedback.operator_replied(CHANNEL, handoff.client_chat_id, handoff.id, lang.value,
                                                       operator_id, operator_name)
         self._log(handoff.client_chat_id, LOG_OPERATOR, text, "text", conversation.id, handoff.id, operator_id,
@@ -876,6 +1026,9 @@ class TelegramSupportBot:
         if ended is None:
             return False
         conversation, request = ended
+        if conversation.handoff_id is not None:
+            self.handoffs.close_handoff(conversation.handoff_id)  # the operator is free for the next client
+        self._pending.pop(str(client_chat_id), None)
         self._log(str(client_chat_id), LOG_SYSTEM,
                   "Разговор завершил " + ("специалист" if by == OPERATOR else "клиент"), "text",
                   conversation.id, conversation.handoff_id)
@@ -1020,6 +1173,16 @@ class TelegramSupportBot:
         return buf.read()
 
 
+def operator_mention(operator: Operator) -> tuple[str, list[MessageEntity] | None]:
+    """How the support-chat post names the operator so Telegram notifies them (the mention starts the post)."""
+    if operator.username:
+        return f"@{operator.username}", None
+    name = operator.name or operator.user_id
+    length = len(name.encode("utf-16-le")) // 2
+    return name, [MessageEntity(type="text_mention", offset=0, length=length,
+                                user=TgUser(id=int(operator.user_id), is_bot=False, first_name=name))]
+
+
 def _lang(value: str) -> Lang:
     try:
         return Lang(value)
@@ -1089,13 +1252,18 @@ async def main() -> None:
     feedback = FeedbackStore(settings.db_path)
     chatlog = ChatLog(settings.db_path)
     operators = OperatorStore(settings.db_path)
-    dp.include_router(TelegramSupportBot(settings, build_engine(settings, handoffs), users, handoffs, feedback,
-                                         chatlog, operators=operators).router)
+    support = TelegramSupportBot(settings, build_engine(settings, handoffs), users, handoffs, feedback, chatlog,
+                                 operators=operators)
+    dp.include_router(support.router)
     try:
         await set_commands(bot, settings.support_chat_id)
     except Exception as e:  # commands are a convenience; the bot works without them
         log.warning("set_my_commands failed: %s", e)
-    await dp.start_polling(bot)
+    waits = asyncio.create_task(support.watch_waits(bot))
+    try:
+        await dp.start_polling(bot)
+    finally:
+        waits.cancel()
 
 
 if __name__ == "__main__":

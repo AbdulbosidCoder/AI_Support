@@ -94,6 +94,24 @@ _T: dict[str, dict[Lang, str]] = {
         Lang.RU: "Настройки. Выберите нужный пункт.",
         Lang.EN: "Settings. Choose an option.",
     },
+    "connecting_operator": {
+        Lang.UZ_LATN: "Sizni qo'llab-quvvatlash xodimiga ulayapman. Iltimos, biroz kuting.",
+        Lang.UZ_CYRL: "Сизни қўллаб-қувватлаш ходимига улаяпман. Илтимос, бироз кутинг.",
+        Lang.RU: "Соединяю вас со специалистом поддержки. Пожалуйста, подождите.",
+        Lang.EN: "Connecting you to a support specialist. Please wait a moment.",
+    },
+    "ai_takeover": {
+        Lang.UZ_LATN: "Assalomu alaykum! Hozir barcha xodimlarimiz band, shuning uchun sizga men — AI yordamchi javob beraman.",
+        Lang.UZ_CYRL: "Ассалому алайкум! Ҳозир барча ходимларимиз банд, шунинг учун сизга мен — AI ёрдамчи жавоб бераман.",
+        Lang.RU: "Здравствуйте! Сейчас все специалисты заняты, поэтому вам отвечу я — AI-помощник.",
+        Lang.EN: "Hello! All our specialists are busy right now, so I, the AI assistant, will help you.",
+    },
+    "ai_how_help": {
+        Lang.UZ_LATN: "Qanday yordam kerak? Muammoni yozing yoki mavzuni tanlang:",
+        Lang.UZ_CYRL: "Қандай ёрдам керак? Муаммони ёзинг ёки мавзуни танланг:",
+        Lang.RU: "Чем могу помочь? Опишите проблему или выберите тему:",
+        Lang.EN: "How can I help? Describe the problem or choose a topic:",
+    },
     "handoff": {
         Lang.UZ_LATN: "Murojaatingiz qo'llab-quvvatlash xodimiga yuborildi. U shu chatda javob beradi.",
         Lang.UZ_CYRL: "Мурожаатингиз қўллаб-қувватлаш ходимига юборилди. У шу чатда жавоб беради.",

@@ -10,6 +10,9 @@ least one is, only active linked operators' replies reach clients; the bot tells
 admin to add them. An operator added by phone who has not registered yet changes nothing.
 
 An operator is addressed by a key: the Telegram id once linked, otherwise the phone number (+digits).
+
+A new conversation goes to a free operator first (`pick_free`): an active linked operator who has
+fewer open hand-offs than allowed; among several, the one who got a hand-off longest ago.
 """
 from __future__ import annotations
 
@@ -190,6 +193,10 @@ class OperatorStore:
             rows = self._db.execute("SELECT * FROM operators ORDER BY active DESC, created_at").fetchall()
         return [_operator(r) for r in rows]
 
+    def available(self) -> list[Operator]:
+        """Operators who can take a conversation: active and registered in the bot (so we know their id)."""
+        return [o for o in self.all() if o.active and o.linked]
+
     def may_answer(self, user_id: str | int | None) -> bool:
         """Whether this person's reply in the support chat goes to the client."""
         with self._lock:
@@ -205,6 +212,16 @@ class OperatorStore:
 
     def close(self) -> None:
         self._db.close()
+
+
+def pick_free(operators: list[Operator], busy: dict[str, int], last_assigned: dict[str, int],
+              max_sessions: int = 1) -> Operator | None:
+    """A free operator for a new conversation, or None if everyone is busy (or there is nobody)."""
+    free = [o for o in operators if o.user_id and busy.get(o.user_id, 0) < max_sessions]
+    if not free:
+        return None
+    # Least loaded first, then whoever waited longest for a hand-off (never assigned = first).
+    return min(free, key=lambda o: (busy.get(o.user_id, 0), last_assigned.get(o.user_id, -1)))
 
 
 def _operator(row: sqlite3.Row) -> Operator:

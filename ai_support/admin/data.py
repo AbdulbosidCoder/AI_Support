@@ -192,6 +192,8 @@ class AdminData:
             """SELECT operator_id, AVG(stars) AS avg, COUNT(*) AS n FROM rating_requests
                WHERE status = 'rated' AND target = 'operator' AND operator_id IS NOT NULL GROUP BY operator_id""")}
         known = {o.key: o for o in self.operators.all()}
+        # Busy: assigned to a client right now (a new conversation waits for them, or it is theirs).
+        busy = self.handoffs.busy_operators()
         result = []
         for key in list(known) + [uid for uid in stats if uid not in known]:
             o: Operator | None = known.get(key)
@@ -213,6 +215,7 @@ class AdminData:
                 "sessions_open": (c["open"] or 0) if c else 0,
                 "rating": round(r["avg"], 1) if r else None,
                 "ratings": r["n"] if r else 0,
+                "busy": busy.get(uid, 0) if uid else 0,
             })
         return result
 
@@ -250,6 +253,8 @@ class AdminData:
                    AND created_at >= ? AND status = 'rated' ORDER BY id LIMIT 1""",
                 (r["channel"], r["client_id"], r["closed_at"]))
             rating = dict(rr) if rr else None
+        h = self._one("SELECT status, assigned_name FROM handoffs WHERE id = ?", (r["handoff_id"],)) \
+            if r["handoff_id"] is not None else None
         return {
             "id": r["id"],
             "channel": r["channel"],
@@ -262,6 +267,9 @@ class AdminData:
             "handoff_id": r["handoff_id"],
             "operator_id": r["operator_id"],
             "operator_name": r["operator_name"],
+            # Who the hand-off is assigned to and its state: waiting (for the operator), operator, ai, closed.
+            "assigned_name": h["assigned_name"] if h else None,
+            "handoff_status": h["status"] if h else None,
             "language": r["language"],
             "topic": r["topic"] or "",
             "opened_at": r["opened_at"],
