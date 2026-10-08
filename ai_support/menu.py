@@ -13,10 +13,10 @@ from .models import Lang
 
 # Order in which languages are offered on the first start.
 LANGUAGE_CHOICES: list[tuple[Lang, str]] = [
-    (Lang.UZ_LATN, "🇺🇿 O'zbekcha"),
-    (Lang.UZ_CYRL, "🇺🇿 Ўзбекча"),
-    (Lang.RU, "🇷🇺 Русский"),
-    (Lang.EN, "🇬🇧 English"),
+    (Lang.UZ_LATN, "O'zbekcha (lotin)"),
+    (Lang.UZ_CYRL, "Ўзбекча (кирилл)"),
+    (Lang.RU, "Русский"),
+    (Lang.EN, "English"),
 ]
 
 # Shown before the client has chosen a language, so it greets in all three main languages.
@@ -54,8 +54,8 @@ def _label(uz: str, cyrl: str, ru: str, en: str) -> dict[Lang, str]:
 
 
 CATEGORIES: list[Category] = [
-    Category("registration", _label("📝 Ro'yxatdan o'tish va kirish", "📝 Рўйхатдан ўтиш ва кириш",
-                                    "📝 Регистрация и вход", "📝 Registration and login"), [
+    Category("registration", _label("Ro'yxatdan o'tish va kirish", "Рўйхатдан ўтиш ва кириш",
+                                    "Регистрация и вход", "Registration and login"), [
         _q("registration", "Ilovada qanday ro'yxatdan o'taman?", "Иловада қандай рўйхатдан ўтаман?",
            "Как зарегистрироваться в приложении?", "How do I register in the app?",
            {Lang.UZ_LATN: "Xonsaroy Pay ilovasida qanday ro'yxatdan o'taman va identifikatsiyadan o'taman?",
@@ -73,7 +73,7 @@ CATEGORIES: list[Category] = [
         _q("vpn_on_login", "Kirishda VPN haqida xabar chiqyapti", "Киришда VPN ҳақида хабар чиқяпти",
            "При входе пишет, что включён VPN", "The app says VPN is on when I log in"),
     ]),
-    Category("cards", _label("💳 Kartalar", "💳 Карталар", "💳 Карты", "💳 Cards"), [
+    Category("cards", _label("Kartalar", "Карталар", "Карты", "Cards"), [
         _q("add_card", "Kartani qanday qo'shaman?", "Картани қандай қўшаман?",
            "Как добавить карту?", "How do I add a card?"),
         _q("card_sms", "Karta qo'shishda SMS kelmayapti", "Карта қўшишда SMS келмаяпти",
@@ -83,7 +83,7 @@ CATEGORIES: list[Category] = [
         _q("delete_card", "Kartani qanday o'chiraman?", "Картани қандай ўчираман?",
            "Как удалить карту?", "How do I delete a card?"),
     ]),
-    Category("payments", _label("💸 To'lovlar", "💸 Тўловлар", "💸 Платежи", "💸 Payments"), [
+    Category("payments", _label("To'lovlar", "Тўловлар", "Платежи", "Payments"), [
         _q("how_to_pay", "Xizmat uchun qanday to'layman?", "Хизмат учун қандай тўлайман?",
            "Как оплатить услугу?", "How do I pay for a service?"),
         _q("payment_problem", "To'lov o'tmadi yoki Pending holatida", "Тўлов ўтмади ёки Pending ҳолатида",
@@ -99,7 +99,7 @@ CATEGORIES: list[Category] = [
         _q("history", "Operatsiyalar tarixini qayerdan topaman?", "Операциялар тарихини қаердан топаман?",
            "Где найти историю операций?", "Where can I find my transaction history?"),
     ]),
-    Category("transfers", _label("🔄 O'tkazmalar", "🔄 Ўтказмалар", "🔄 Переводы", "🔄 Transfers"), [
+    Category("transfers", _label("O'tkazmalar", "Ўтказмалар", "Переводы", "Transfers"), [
         _q("how_to_transfer", "Kartadan kartaga qanday o'tkazaman?", "Картадан картага қандай ўтказаман?",
            "Как перевести с карты на карту?", "How do I make a card-to-card transfer?"),
         _q("transfer_not_received", "O'tkazma qabul qiluvchiga kelmadi", "Ўтказма қабул қилувчига келмади",
@@ -111,8 +111,8 @@ CATEGORIES: list[Category] = [
         _q("wrong_recipient", "Pulni noto'g'ri kartaga o'tkazib yubordim", "Пулни нотўғри картага ўтказиб юбордим",
            "Я перевёл деньги не на ту карту", "I sent money to the wrong card"),
     ]),
-    Category("apartment", _label("🏠 Kvartira to'lovi", "🏠 Квартира тўлови", "🏠 Оплата квартиры",
-                                 "🏠 Apartment payments"), [
+    Category("apartment", _label("Kvartira to'lovi", "Квартира тўлови", "Оплата квартиры",
+                                 "Apartment payments"), [
         _q("add_contract", "Shartnomani ilovaga qanday qo'shaman?", "Шартномани иловага қандай қўшаман?",
            "Как добавить договор в приложение?", "How do I add my contract to the app?"),
         _q("apartment_debt", "Kvartira qarzini qanday tekshirib, to'layman?", "Квартира қарзини қандай текшириб, тўлайман?",
@@ -122,22 +122,22 @@ CATEGORIES: list[Category] = [
         _q("schedule_receipt", "To'lov jadvali va kvitansiya qayerda?", "Тўлов жадвали ва квитанция қаерда?",
            "Где график платежей и квитанция?", "Where are my payment schedule and receipt?"),
     ]),
-    Category("security", _label("🛡 Xavfsizlik va cheklovlar", "🛡 Хавфсизлик ва чекловлар",
-                                "🛡 Безопасность и ограничения", "🛡 Security and restrictions"), [
+    Category("security", _label("Xavfsizlik va cheklovlar", "Хавфсизлик ва чекловлар",
+                                "Безопасность и ограничения", "Security and restrictions"), [
         _q("restricted", "Hisobimda cheklov borligi haqida xabar chiqdi", "Ҳисобимда чеклов борлиги ҳақида хабар чиқди",
            "Пишет, что на аккаунте ограничение", "It says my account has a restriction"),
         _q("suspicious", "Men qilmagan operatsiyani ko'ryapman", "Мен қилмаган операцияни кўряпман",
            "Вижу операцию, которую я не делал", "I see an operation I didn't make"),
     ]),
-    Category("technical", _label("🛠 Texnik muammolar", "🛠 Техник муаммолар", "🛠 Технические проблемы",
-                                 "🛠 Technical problems"), [
+    Category("technical", _label("Texnik muammolar", "Техник муаммолар", "Технические проблемы",
+                                 "Technical problems"), [
         _q("server_error", "«Server Error» yoki cheksiz yuklanish", "«Server Error» ёки чексиз юкланиш",
            "«Server Error» или бесконечная загрузка", "«Server Error» or endless loading"),
         _q("app_not_opening", "Ilova ochilmayapti", "Илова очилмаяпти",
            "Приложение не открывается", "The app won't open"),
     ]),
-    Category("profile", _label("👤 Profil va sozlamalar", "👤 Профил ва созламалар", "👤 Профиль и настройки",
-                               "👤 Profile and settings"), [
+    Category("profile", _label("Profil va sozlamalar", "Профил ва созламалар", "Профиль и настройки",
+                               "Profile and settings"), [
         _q("app_settings", "Ilova tili va sozlamalarini qanday o'zgartiraman?",
            "Илова тили ва созламаларини қандай ўзгартираман?",
            "Как изменить язык и настройки приложения?", "How do I change the app language and settings?"),
@@ -147,18 +147,18 @@ CATEGORIES: list[Category] = [
 # Every question of every category, for lookups by id.
 QUICK_QUESTIONS: list[QuickQuestion] = [q for c in CATEGORIES for q in c.questions]
 
-OPERATOR_LABEL = {Lang.UZ_LATN: "👨‍💼 Operator", Lang.UZ_CYRL: "👨‍💼 Оператор",
-                  Lang.RU: "👨‍💼 Оператор", Lang.EN: "👨‍💼 Operator"}
-SETTINGS_LABEL = {Lang.UZ_LATN: "⚙️ Sozlamalar", Lang.UZ_CYRL: "⚙️ Созламалар",
-                  Lang.RU: "⚙️ Настройки", Lang.EN: "⚙️ Settings"}
-END_LABEL = {Lang.UZ_LATN: "✅ Suhbatni yakunlash", Lang.UZ_CYRL: "✅ Суҳбатни якунлаш",
-             Lang.RU: "✅ Завершить разговор", Lang.EN: "✅ End conversation"}
-BACK_LABEL = {Lang.UZ_LATN: "⬅️ Orqaga", Lang.UZ_CYRL: "⬅️ Орқага", Lang.RU: "⬅️ Назад", Lang.EN: "⬅️ Back"}
-MENU_LABEL = {Lang.UZ_LATN: "🏠 Menyu", Lang.UZ_CYRL: "🏠 Меню", Lang.RU: "🏠 Меню", Lang.EN: "🏠 Menu"}
-CHANGE_PHONE_LABEL = {Lang.UZ_LATN: "📱 Raqamni yangilash", Lang.UZ_CYRL: "📱 Рақамни янгилаш",
-                      Lang.RU: "📱 Обновить номер", Lang.EN: "📱 Update phone number"}
-CHANGE_LANGUAGE_LABEL = {Lang.UZ_LATN: "🌐 Tilni o'zgartirish", Lang.UZ_CYRL: "🌐 Тилни ўзгартириш",
-                         Lang.RU: "🌐 Изменить язык", Lang.EN: "🌐 Change language"}
+OPERATOR_LABEL = {Lang.UZ_LATN: "Operator", Lang.UZ_CYRL: "Оператор",
+                  Lang.RU: "Оператор", Lang.EN: "Operator"}
+SETTINGS_LABEL = {Lang.UZ_LATN: "Sozlamalar", Lang.UZ_CYRL: "Созламалар",
+                  Lang.RU: "Настройки", Lang.EN: "Settings"}
+END_LABEL = {Lang.UZ_LATN: "Suhbatni yakunlash", Lang.UZ_CYRL: "Суҳбатни якунлаш",
+             Lang.RU: "Завершить разговор", Lang.EN: "End conversation"}
+BACK_LABEL = {Lang.UZ_LATN: "Orqaga", Lang.UZ_CYRL: "Орқага", Lang.RU: "Назад", Lang.EN: "Back"}
+MENU_LABEL = {Lang.UZ_LATN: "Menyu", Lang.UZ_CYRL: "Меню", Lang.RU: "Меню", Lang.EN: "Menu"}
+CHANGE_PHONE_LABEL = {Lang.UZ_LATN: "Raqamni yangilash", Lang.UZ_CYRL: "Рақамни янгилаш",
+                      Lang.RU: "Обновить номер", Lang.EN: "Update phone number"}
+CHANGE_LANGUAGE_LABEL = {Lang.UZ_LATN: "Tilni o'zgartirish", Lang.UZ_CYRL: "Тилни ўзгартириш",
+                         Lang.RU: "Изменить язык", Lang.EN: "Change language"}
 
 
 @dataclass(frozen=True)

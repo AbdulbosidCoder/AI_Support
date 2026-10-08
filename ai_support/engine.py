@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from collections import defaultdict, deque
 
 from . import guardrails
@@ -12,11 +13,25 @@ from .llm import LLMError, ModelAnswer, SupportLLM, Turn
 from .models import BotReply, IncomingMessage, Lang
 from .pii import mask_pii
 from .stt import SpeechToText, STTError
-from .templates import t
+from .templates import strip_emoji, t
 from .videos import VideoLibrary
 
 log = logging.getLogger(__name__)
 
+
+
+# A greeting the model opens its answer with: the client was already greeted, so it would be a second one.
+_GREETING = re.compile(
+    r"^(?:assalomu?\s+alaykum|ассалому\s+алайкум|assalom|salom|салом|здравствуйте|добрый\s+(?:день|вечер)|"
+    r"доброе\s+утро|привет|hello|hi|good\s+(?:morning|afternoon|evening))\b[\s!,.]*",
+    re.IGNORECASE,
+)
+
+
+def strip_greeting(answer: str) -> str:
+    """The answer without an opening greeting, unless the greeting is all there is."""
+    rest = _GREETING.sub("", answer, count=1)
+    return rest[:1].upper() + rest[1:] if rest.strip() else answer
 
 class ConversationStore:
     """Short per-user text history (in memory). Replace with a DB for multi-instance deploys."""
@@ -163,7 +178,8 @@ class SupportEngine:
         except ValueError:
             lang = fallback_lang
 
-        answer = mask_pii(ans.answer.strip())
+        # No emoji in messages to clients, whatever the model wrote.
+        answer = strip_greeting(strip_emoji(mask_pii(ans.answer.strip())))
         escalate = ans.needs_escalation
         reason = ans.escalation_reason
         guard = False

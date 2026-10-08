@@ -1,7 +1,25 @@
 """Fixed replies used without the model: hand-off, errors, PII reminder, greetings, menu."""
 from __future__ import annotations
 
+import re
+
 from .models import Lang
+
+# Pictographs, dingbats, flags and keycaps, with their joiners and variation selectors. Messages to
+# clients carry no emoji; arrows such as "→" in instructions are text and stay.
+_EMOJI = re.compile(
+    "[\U0001F000-\U0001FAFF\u2600-\u27BF\u2B00-\u2BFF\u2300-\u23FF\u20E3\uFE0F\u200D]"
+)
+
+
+def strip_emoji(text: str) -> str:
+    """The text without emoji (and without the spaces they leave at line starts or doubled)."""
+    if not _EMOJI.search(text):
+        return text
+    cleaned = _EMOJI.sub("", text)
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    return "\n".join(line.strip(" \t") for line in cleaned.split("\n")).strip()
+
 
 _T: dict[str, dict[Lang, str]] = {
     "welcome": {
@@ -10,11 +28,17 @@ _T: dict[str, dict[Lang, str]] = {
         Lang.RU: "Какая у вас проблема? Напишите, отправьте голосовое или скриншот.",
         Lang.EN: "What problem are you facing? Write it, send a voice message or a screenshot.",
     },
+    "hello": {
+        Lang.UZ_LATN: "Assalomu alaykum!",
+        Lang.UZ_CYRL: "Ассалому алайкум!",
+        Lang.RU: "Здравствуйте!",
+        Lang.EN: "Hello!",
+    },
     "ask_problem": {
-        Lang.UZ_LATN: "Assalomu alaykum! Qanday muammo yuz berdi?",
-        Lang.UZ_CYRL: "Ассалому алайкум! Қандай муаммо юз берди?",
-        Lang.RU: "Здравствуйте! Какая у вас проблема?",
-        Lang.EN: "Hello! What problem are you facing?",
+        Lang.UZ_LATN: "Muammoingizni qisqacha yozing: nima qilmoqchi edingiz va nima chiqdi?",
+        Lang.UZ_CYRL: "Муаммоингизни қисқача ёзинг: нима қилмоқчи эдингиз ва нима чиқди?",
+        Lang.RU: "Коротко опишите проблему: что вы хотели сделать и что получилось?",
+        Lang.EN: "Briefly describe the problem: what were you trying to do and what happened?",
     },
     "menu_hint": {
         Lang.UZ_LATN: "Yoki mavzuni tanlang:",
@@ -35,46 +59,46 @@ _T: dict[str, dict[Lang, str]] = {
         Lang.EN: "Language saved: English.",
     },
     "register_ask": {
-        Lang.UZ_LATN: "Ro'yxatdan o'tish uchun telefon raqamingizni yuboring: pastdagi «📱 Raqamni yuborish» tugmasini bosing. Raqam faqat qo'llab-quvvatlash xodimlariga ko'rinadi va murojaatingizni tezroq hal qilishga yordam beradi.",
-        Lang.UZ_CYRL: "Рўйхатдан ўтиш учун телефон рақамингизни юборинг: пастдаги «📱 Рақамни юбориш» тугмасини босинг. Рақам фақат қўллаб-қувватлаш ходимларига кўринади ва мурожаатингизни тезроқ ҳал қилишга ёрдам беради.",
-        Lang.RU: "Для регистрации отправьте свой номер телефона: нажмите кнопку «📱 Отправить номер» внизу. Номер видят только специалисты поддержки, он помогает быстрее решить ваше обращение.",
-        Lang.EN: "To register, share your phone number: tap «📱 Share my number» below. Only support specialists see it, and it helps us resolve your request faster.",
+        Lang.UZ_LATN: "Ro'yxatdan o'tish uchun telefon raqamingizni yuboring: pastdagi «Raqamni yuborish» tugmasini bosing. Raqam faqat qo'llab-quvvatlash xodimlariga ko'rinadi va murojaatingizni tezroq hal qilishga yordam beradi.",
+        Lang.UZ_CYRL: "Рўйхатдан ўтиш учун телефон рақамингизни юборинг: пастдаги «Рақамни юбориш» тугмасини босинг. Рақам фақат қўллаб-қувватлаш ходимларига кўринади ва мурожаатингизни тезроқ ҳал қилишга ёрдам беради.",
+        Lang.RU: "Для регистрации отправьте свой номер телефона: нажмите кнопку «Отправить номер» внизу. Номер видят только специалисты поддержки, он помогает быстрее решить ваше обращение.",
+        Lang.EN: "To register, share your phone number: tap «Share my number» below. Only support specialists see it, and it helps us resolve your request faster.",
     },
     "share_phone": {
-        Lang.UZ_LATN: "📱 Raqamni yuborish",
-        Lang.UZ_CYRL: "📱 Рақамни юбориш",
-        Lang.RU: "📱 Отправить номер",
-        Lang.EN: "📱 Share my number",
+        Lang.UZ_LATN: "Raqamni yuborish",
+        Lang.UZ_CYRL: "Рақамни юбориш",
+        Lang.RU: "Отправить номер",
+        Lang.EN: "Share my number",
     },
     "register_own_number": {
-        Lang.UZ_LATN: "Iltimos, o'zingizning raqamingizni «📱 Raqamni yuborish» tugmasi orqali yuboring.",
-        Lang.UZ_CYRL: "Илтимос, ўзингизнинг рақамингизни «📱 Рақамни юбориш» тугмаси орқали юборинг.",
-        Lang.RU: "Пожалуйста, отправьте свой собственный номер кнопкой «📱 Отправить номер».",
-        Lang.EN: "Please share your own number with the «📱 Share my number» button.",
+        Lang.UZ_LATN: "Iltimos, o'zingizning raqamingizni «Raqamni yuborish» tugmasi orqali yuboring.",
+        Lang.UZ_CYRL: "Илтимос, ўзингизнинг рақамингизни «Рақамни юбориш» тугмаси орқали юборинг.",
+        Lang.RU: "Пожалуйста, отправьте свой собственный номер кнопкой «Отправить номер».",
+        Lang.EN: "Please share your own number with the «Share my number» button.",
     },
     "registered": {
-        Lang.UZ_LATN: "Rahmat, ro'yxatdan o'tdingiz ✅",
-        Lang.UZ_CYRL: "Раҳмат, рўйхатдан ўтдингиз ✅",
-        Lang.RU: "Спасибо, вы зарегистрированы ✅",
-        Lang.EN: "Thank you, you are registered ✅",
+        Lang.UZ_LATN: "Rahmat, ro'yxatdan o'tdingiz.",
+        Lang.UZ_CYRL: "Раҳмат, рўйхатдан ўтдингиз.",
+        Lang.RU: "Спасибо, вы зарегистрированы.",
+        Lang.EN: "Thank you, you are registered.",
     },
     "your_question": {
-        Lang.UZ_LATN: "❓ Savolingiz:",
-        Lang.UZ_CYRL: "❓ Саволингиз:",
-        Lang.RU: "❓ Ваш вопрос:",
-        Lang.EN: "❓ Your question:",
+        Lang.UZ_LATN: "Savolingiz:",
+        Lang.UZ_CYRL: "Саволингиз:",
+        Lang.RU: "Ваш вопрос:",
+        Lang.EN: "Your question:",
     },
     "assistant_name": {
-        Lang.UZ_LATN: "🤖 Yordamchi",
-        Lang.UZ_CYRL: "🤖 Ёрдамчи",
-        Lang.RU: "🤖 Помощник",
-        Lang.EN: "🤖 Assistant",
+        Lang.UZ_LATN: "Yordamchi",
+        Lang.UZ_CYRL: "Ёрдамчи",
+        Lang.RU: "Помощник",
+        Lang.EN: "Assistant",
     },
     "operator_name": {
-        Lang.UZ_LATN: "👨‍💼 Qo'llab-quvvatlash xodimi",
-        Lang.UZ_CYRL: "👨‍💼 Қўллаб-қувватлаш ходими",
-        Lang.RU: "👨‍💼 Специалист поддержки",
-        Lang.EN: "👨‍💼 Support specialist",
+        Lang.UZ_LATN: "Qo'llab-quvvatlash xodimi",
+        Lang.UZ_CYRL: "Қўллаб-қувватлаш ходими",
+        Lang.RU: "Специалист поддержки",
+        Lang.EN: "Support specialist",
     },
     "with_operator": {
         Lang.UZ_LATN: "Murojaatingiz qo'llab-quvvatlash xodimida. Xabarlaringizni unga yetkazaman, u shu chatda javob beradi.",
@@ -101,10 +125,10 @@ _T: dict[str, dict[Lang, str]] = {
         Lang.EN: "Connecting you to a support specialist. Please wait a moment.",
     },
     "ai_takeover": {
-        Lang.UZ_LATN: "Assalomu alaykum! Hozir barcha xodimlarimiz band, shuning uchun sizga men — AI yordamchi javob beraman.",
-        Lang.UZ_CYRL: "Ассалому алайкум! Ҳозир барча ходимларимиз банд, шунинг учун сизга мен — AI ёрдамчи жавоб бераман.",
-        Lang.RU: "Здравствуйте! Сейчас все специалисты заняты, поэтому вам отвечу я — AI-помощник.",
-        Lang.EN: "Hello! All our specialists are busy right now, so I, the AI assistant, will help you.",
+        Lang.UZ_LATN: "Hozir barcha xodimlarimiz band, shuning uchun sizga AI yordamchi javob beradi.",
+        Lang.UZ_CYRL: "Ҳозир барча ходимларимиз банд, шунинг учун сизга AI ёрдамчи жавоб беради.",
+        Lang.RU: "Сейчас все специалисты заняты, поэтому вам ответит AI-помощник.",
+        Lang.EN: "All our specialists are busy right now, so the AI assistant will help you.",
     },
     "ai_how_help": {
         Lang.UZ_LATN: "Qanday yordam kerak? Muammoni yozing yoki mavzuni tanlang:",
@@ -155,16 +179,16 @@ _T: dict[str, dict[Lang, str]] = {
         Lang.EN: "Please describe the problem or send a screenshot of the Xonsaroy Pay app.",
     },
     "rate_bot": {
-        Lang.UZ_LATN: "Suhbat yakunlandi. Yordamchi qanchalik yordam bera oldi? Baholang:",
-        Lang.UZ_CYRL: "Суҳбат якунланди. Ёрдамчи қанчалик ёрдам бера олди? Баҳоланг:",
-        Lang.RU: "Разговор завершён. Насколько помог помощник? Оцените:",
-        Lang.EN: "The conversation has ended. How much did the assistant help? Please rate:",
+        Lang.UZ_LATN: "Suhbat yakunlandi. Yordamchi qanchalik yordam bera oldi? Baholang (1 — yomon, 5 — a'lo):",
+        Lang.UZ_CYRL: "Суҳбат якунланди. Ёрдамчи қанчалик ёрдам бера олди? Баҳоланг (1 — ёмон, 5 — аъло):",
+        Lang.RU: "Разговор завершён. Насколько помог помощник? Оцените (1 — плохо, 5 — отлично):",
+        Lang.EN: "The conversation has ended. How much did the assistant help? Please rate (1 — poor, 5 — excellent):",
     },
     "rate_operator": {
-        Lang.UZ_LATN: "Suhbat yakunlandi. Qo'llab-quvvatlash xodimi qanchalik yordam bera oldi? Baholang:",
-        Lang.UZ_CYRL: "Суҳбат якунланди. Қўллаб-қувватлаш ходими қанчалик ёрдам бера олди? Баҳоланг:",
-        Lang.RU: "Разговор завершён. Насколько помог специалист поддержки? Оцените:",
-        Lang.EN: "The conversation has ended. How much did the support specialist help? Please rate:",
+        Lang.UZ_LATN: "Suhbat yakunlandi. Qo'llab-quvvatlash xodimi qanchalik yordam bera oldi? Baholang (1 — yomon, 5 — a'lo):",
+        Lang.UZ_CYRL: "Суҳбат якунланди. Қўллаб-қувватлаш ходими қанчалик ёрдам бера олди? Баҳоланг (1 — ёмон, 5 — аъло):",
+        Lang.RU: "Разговор завершён. Насколько помог специалист поддержки? Оцените (1 — плохо, 5 — отлично):",
+        Lang.EN: "The conversation has ended. How much did the support specialist help? Please rate (1 — poor, 5 — excellent):",
     },
     "ended_by_timeout": {
         Lang.UZ_LATN: "Uzoq vaqt xabar bo'lmadi.",
@@ -185,16 +209,16 @@ _T: dict[str, dict[Lang, str]] = {
         Lang.EN: "There is no active conversation right now. If you have a question, write to us.",
     },
     "rate_no_answer": {
-        Lang.UZ_LATN: "❌ Javob bermadi",
-        Lang.UZ_CYRL: "❌ Жавоб бермади",
-        Lang.RU: "❌ Не ответили",
-        Lang.EN: "❌ No answer",
+        Lang.UZ_LATN: "Javob bermadi",
+        Lang.UZ_CYRL: "Жавоб бермади",
+        Lang.RU: "Не ответили",
+        Lang.EN: "No answer",
     },
     "rate_not_helped": {
-        Lang.UZ_LATN: "😕 Yordam bera olmadi",
-        Lang.UZ_CYRL: "😕 Ёрдам бера олмади",
-        Lang.RU: "😕 Не смогли помочь",
-        Lang.EN: "😕 Couldn't help",
+        Lang.UZ_LATN: "Yordam bera olmadi",
+        Lang.UZ_CYRL: "Ёрдам бера олмади",
+        Lang.RU: "Не смогли помочь",
+        Lang.EN: "Couldn't help",
     },
     "rate_thanks": {
         Lang.UZ_LATN: "Rahmat! Bahoingiz qabul qilindi.",
@@ -203,10 +227,10 @@ _T: dict[str, dict[Lang, str]] = {
         Lang.EN: "Thank you! Your rating has been saved.",
     },
     "rate_bot_low": {
-        Lang.UZ_LATN: "Muammo hal bo'lmagan bo'lsa, «👨‍💼 Operator» tugmasini bosing — murojaatingizni qo'llab-quvvatlash xodimiga yuboramiz.",
-        Lang.UZ_CYRL: "Муаммо ҳал бўлмаган бўлса, «👨‍💼 Оператор» тугмасини босинг — мурожаатингизни қўллаб-қувватлаш ходимига юборамиз.",
-        Lang.RU: "Если проблема не решена, нажмите «👨‍💼 Оператор», и мы передадим обращение специалисту поддержки.",
-        Lang.EN: "If the problem isn't solved, tap «👨‍💼 Operator» and we'll pass your request to a support specialist.",
+        Lang.UZ_LATN: "Muammo hal bo'lmagan bo'lsa, «Operator» tugmasini bosing — murojaatingizni qo'llab-quvvatlash xodimiga yuboramiz.",
+        Lang.UZ_CYRL: "Муаммо ҳал бўлмаган бўлса, «Оператор» тугмасини босинг — мурожаатингизни қўллаб-қувватлаш ходимига юборамиз.",
+        Lang.RU: "Если проблема не решена, нажмите «Оператор», и мы передадим обращение специалисту поддержки.",
+        Lang.EN: "If the problem isn't solved, tap «Operator» and we'll pass your request to a support specialist.",
     },
     "rate_expired": {
         Lang.UZ_LATN: "Bu baholash endi faol emas.",

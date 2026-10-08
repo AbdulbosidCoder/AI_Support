@@ -164,8 +164,8 @@ def end_keyboard(lang: Lang) -> InlineKeyboardMarkup:
 
 
 def rating_keyboard(request: RatingRequest, lang: Lang) -> InlineKeyboardMarkup:
-    """1-5 stars, plus "no answer" (operator only) and "could not help"."""
-    stars = [InlineKeyboardButton(text=f"{n}⭐", callback_data=f"rate:{request.id}:{n}") for n in range(1, 6)]
+    """Marks 1-5, plus "no answer" (operator only) and "could not help"."""
+    stars = [InlineKeyboardButton(text=str(n), callback_data=f"rate:{request.id}:{n}") for n in range(1, 6)]
     other = [InlineKeyboardButton(text=t("rate_not_helped", lang), callback_data=f"rate:{request.id}:nohelp")]
     if request.target == OPERATOR:
         other.insert(0, InlineKeyboardButton(text=t("rate_no_answer", lang), callback_data=f"rate:{request.id}:none"))
@@ -193,9 +193,10 @@ def panel_back_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Панель", callback_data="panel:home")]])
 
 
-def welcome_text(lang: Lang, saved: bool = False) -> str:
-    first = t("language_saved", lang) if saved else t("ask_problem", lang)
-    return f"{first}\n\n{t('welcome', lang)}\n\n{t('menu_hint', lang)}"
+def welcome_text(lang: Lang, saved: bool = False, greet: bool = False) -> str:
+    """The menu screen: asks for the problem once. It greets only when nothing has greeted the client yet."""
+    first = [t("language_saved", lang)] if saved else ([t("hello", lang)] if greet else [])
+    return "\n\n".join(first + [t("welcome", lang), t("menu_hint", lang)])
 
 
 def _bot_of(event):
@@ -422,9 +423,13 @@ class TelegramSupportBot:
             pass
         await self._reply_buttons(message, text, markup, menu=True, bot=_bot_of(callback))
 
-    async def _next_step(self, message: Message, user: User) -> bool:
-        """Ask for what registration still lacks; True if the client is fully registered."""
-        if user.language is None:
+    async def _next_step(self, message: Message, user: User, start: bool = False) -> bool:
+        """Ask for what registration still lacks; True if the client is fully registered.
+
+        The language always comes before the phone number: on /start an unregistered client chooses it
+        (again), then shares the number in that language.
+        """
+        if user.language is None or (start and not user.registered):
             # First visit: greet in Uzbek, Russian and English and ask for the language.
             await self._reply_buttons(message, CHOOSE_LANGUAGE, language_keyboard(), menu=True)
             return False
@@ -438,8 +443,9 @@ class TelegramSupportBot:
 
     async def on_start(self, message: Message) -> None:
         user = self.register_user(message)
-        if await self._next_step(message, user):
-            await self._send_welcome(message, user.lang)
+        if await self._next_step(message, user, start=True):
+            # A returning client: the only greeting of this visit.
+            await self._send_welcome(message, user.lang, greet=True)
 
     async def on_contact(self, message: Message) -> None:
         """The client shared a contact: their own number registers them."""
@@ -494,8 +500,8 @@ class TelegramSupportBot:
         self._buttons.pop(str(callback.message.chat.id), None)
         await self._ask_phone(callback.message, lang)
 
-    async def _send_welcome(self, message: Message, lang: Lang, saved: bool = False) -> None:
-        await self._reply_buttons(message, welcome_text(lang, saved), main_keyboard(lang), menu=True)
+    async def _send_welcome(self, message: Message, lang: Lang, saved: bool = False, greet: bool = False) -> None:
+        await self._reply_buttons(message, welcome_text(lang, saved, greet), main_keyboard(lang), menu=True)
 
     # --- client buttons -----------------------------------------------------------------------------
 
@@ -1151,7 +1157,7 @@ class TelegramSupportBot:
         await callback.answer(t("rate_thanks", lang))
         mark = {"no_answer": t("rate_no_answer", lang), "not_helped": t("rate_not_helped", lang)}
         try:
-            await callback.message.edit_text(f"{t('rate_thanks', lang)} {mark.get(rated.outcome, f'{rated.stars}⭐')}")
+            await callback.message.edit_text(f"{t('rate_thanks', lang)} {mark.get(rated.outcome, f'{rated.stars}/5')}")
         except Exception:  # message too old to edit: the rating is saved anyway
             pass
         if rated.target == BOT and rated.stars <= 2:

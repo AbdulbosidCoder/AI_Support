@@ -587,12 +587,12 @@ def test_client_ends_conversation_rates_bot_and_ai_assesses():
     client, text, kb = tg.sent[-1]
     assert client == 42 and text == t("rate_bot", Lang.UZ_LATN)
     labels = [b.text for row in kb.inline_keyboard for b in row]
-    assert labels[:5] == ["1⭐", "2⭐", "3⭐", "4⭐", "5⭐"] and t("rate_not_helped", Lang.UZ_LATN) in labels
+    assert labels[:5] == ["1", "2", "3", "4", "5"] and t("rate_not_helped", Lang.UZ_LATN) in labels
     assert t("rate_no_answer", Lang.UZ_LATN) not in labels  # the bot always answers
     assert len(llm.assessed) == 1 and bot.engine.recent_turns("42") == []  # next question starts fresh
     cb, edits = rate_callback(chat, rate_data(kb))
     asyncio.run(bot.on_rate(cb, tg))
-    assert edits == [f"{t('rate_thanks', Lang.UZ_LATN)} 4⭐"] and feedback.score("bot").count == 1
+    assert edits == [f"{t('rate_thanks', Lang.UZ_LATN)} 4/5"] and feedback.score("bot").count == 1
     asyncio.run(bot.on_rate(rate_callback(chat, rate_data(kb, 5))[0], tg))  # changed the rating
     assert feedback.score("bot").average == 5.0 and feedback.score().count == 1
 
@@ -1202,7 +1202,7 @@ def test_menu_tree_topic_then_full_question_in_one_message():
     asyncio.run(bot.on_category(chat.tap(menu, "cat:registration")))
     text, kb = chat.messages[menu]
     labels = [row[0].text for row in kb.inline_keyboard]
-    assert chat.order == [menu] and text.startswith("📝 Ro'yxatdan o'tish va kirish")
+    assert chat.order == [menu] and text.startswith("Ro'yxatdan o'tish va kirish")
     assert "Ro'yxatdan o'tishda muammo bo'ldi" in labels and kb.inline_keyboard[-1][0].callback_data == "menu"
     asyncio.run(bot.on_menu_button(chat.tap(menu, "menu")))  # back to the topics, same message
     assert chat.order == [menu] and chat.messages[menu][1].inline_keyboard[0][0].callback_data == "cat:registration"
