@@ -24,6 +24,11 @@ FORBIDDEN = [
     "We have unblocked your account.",
     "Ваш лимит увеличен до 50 млн.",
     "Limit oshirildi.",
+    "Limitingizni oshirib qo'ydik.",
+    "Limitingiz oshirildi.",
+    "Лимитингизни ошириб қўйдик.",
+    "Мы увеличили вам лимит.",
+    "We have increased your limit.",
     "Платёж отменён.",
     "To'lov bekor qilindi.",
     "Антифрод срабатывает, когда больше 5 переводов в час.",
@@ -40,6 +45,8 @@ SAFE = [
     "Please don't repeat the transfer; I am passing it to a specialist for review.",
     "Добавьте карту: «Kartalarim» → «Qo'shish». Код придёт в SMS.",
     "Qayta yuborish tugmasini taymer tugagandan keyin bosing.",
+    "Limitni oshirish uchun murojaatingizni xodimga yuboraman.",
+    "Лимит можно изменить только через специалиста поддержки.",
 ]
 
 
