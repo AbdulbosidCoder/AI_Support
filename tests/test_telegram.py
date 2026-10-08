@@ -548,6 +548,11 @@ def rating_bot(llm):
     return bot, feedback
 
 
+def to_client(tg, client=42):
+    """The last message sent to the client (the support chat may get posts after it)."""
+    return next(m for m in reversed(tg.sent) if m[0] == client)
+
+
 def rate_data(kb, stars=4):
     return kb.inline_keyboard[0][stars - 1].callback_data
 
@@ -669,7 +674,7 @@ def test_client_ends_after_operator_and_rates_operator():
     bot, feedback, chat, tg, post = escalated_with_feedback()
     asyncio.run(bot.on_operator_reply(operator_msg(Chat(), "Проверьте раздел «Tarix».", post), tg))
     asyncio.run(bot.on_end_button(end_callback(chat), tg))
-    client, text, kb = tg.sent[-1]
+    client, text, kb = to_client(tg)
     assert text == t("rate_operator", Lang.RU)
     labels = [b.text for row in kb.inline_keyboard for b in row]
     assert t("rate_no_answer", Lang.RU) in labels and t("rate_not_helped", Lang.RU) in labels
@@ -680,7 +685,7 @@ def test_client_ends_after_operator_and_rates_operator():
 def test_client_ends_before_operator_answered_can_say_no_answer():
     bot, feedback, chat, tg, post = escalated_with_feedback()
     asyncio.run(bot.on_end_button(end_callback(chat), tg))
-    kb = tg.sent[-1][2]
+    kb = to_client(tg)[2]
     data = kb.inline_keyboard[1][0].callback_data  # "no answer"
     asyncio.run(bot.on_rate(rate_callback(chat, data)[0], tg))
     score = feedback.score("operator")
@@ -701,7 +706,7 @@ def test_operator_ends_with_button_or_command():
             asyncio.run(bot.on_operator_end(operator_msg(support, "/end", post), tg))
             reply = support.sent[-1][0]
         assert reply == "Разговор завершён, клиента попросили его оценить."
-        client, text, _ = tg.sent[-1]
+        client, text, _ = to_client(tg)
         assert client == 42 and text == f"{t('ended_by_operator', Lang.RU)}\n{t('rate_operator', Lang.RU)}"
         asyncio.run(bot.on_operator_end(operator_msg(support, "/end", post), tg))
         assert support.sent[-1][0] == "Разговор уже завершён."
@@ -750,7 +755,7 @@ def test_rating_command_shows_anonymous_rating():
     bot, feedback, chat, tg, post = escalated_with_feedback()
     asyncio.run(bot.on_operator_reply(operator_msg(Chat(), "Ответ", post), tg))
     asyncio.run(bot.on_end_button(end_callback(chat), tg))
-    asyncio.run(bot.on_rate(rate_callback(chat, rate_data(tg.sent[-1][2]))[0], tg))
+    asyncio.run(bot.on_rate(rate_callback(chat, rate_data(to_client(tg)[2]))[0], tg))
     support = Chat()
     asyncio.run(bot.on_rating(operator_msg(support, "/rating", None)))
     text = support.sent[-1][0]

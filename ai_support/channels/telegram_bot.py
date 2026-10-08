@@ -17,10 +17,11 @@ with Add / Edit and add / Reject buttons. /menu in the support chat (or /start i
 opens the operator panel: candidates and the rating. The old text commands still work there.
 
 Ratings (ai_support/feedback.py): a bot answer or a hand-off opens a conversation. It ends when the
-client taps "End conversation" or the operator does (button under the escalation post). Then the
-client rates it once: the bot if it never reached a person, otherwise the operator. The escalation
-post carries the AI's assessment of the client, buttons for the operator's own assessment
-(polite / calm / rude) and a note button. Assessments and levels never reach the client.
+client taps "End conversation", the operator does (button under the escalation post), or nobody writes
+in it for SESSION_IDLE_MINUTES. Only then the client rates it once: the bot if it never reached a
+person, otherwise the operator. On the same close the AI assesses the client from the whole
+conversation and, if an operator had it, a post in the support chat asks the operator to assess the
+client too (polite / calm / rude, a note). Assessments and levels never reach the client.
 
 Every message of the chat (client, bot, operator, system events) is saved in ai_support/chatlog.py,
 linked to the conversation, so support staff can read sessions as chats.
@@ -38,6 +39,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from datetime import datetime, timedelta, timezone
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.enums import ChatAction
@@ -65,11 +67,12 @@ from ..config import Settings
 from ..engine import SupportEngine
 from ..factory import build_engine, load_knowledge
 from ..feedback import (
-    BOT, OPERATOR, TONE_LABELS, TONES, Assessment, FeedbackStore, RatingError, RatingRequest, client_level,
+    BOT, OPERATOR, TIMEOUT, TONE_LABELS, TONES, Assessment, FeedbackStore, RatingError, RatingRequest, client_level,
     opens_conversation, render_assessment, render_rating,
 )
 from ..handoffs import WAITING, WITH_AI, Candidate, Handoff, HandoffStore, ReviewError
 from ..language import is_small_talk
+from ..llm import Turn
 from ..menu import (
     CHANGE_LANGUAGE_LABEL, CHANGE_PHONE_LABEL, CHOOSE_LANGUAGE, END_LABEL, LANGUAGE_CHOICES, MENU_LABEL, OPERATOR_LABEL,
     BACK_LABEL, CATEGORIES, SETTINGS_LABEL, category, match_menu, quick_question,
@@ -175,6 +178,14 @@ def tone_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text=TONE_BUTTONS[tone], callback_data=f"ctone:{tone}") for tone in TONES],
         [InlineKeyboardButton(text=NOTE_LABEL, callback_data="hnote"),
          InlineKeyboardButton(text=OPERATOR_END_LABEL, callback_data="hend")],
+    ])
+
+
+def closed_tone_keyboard() -> InlineKeyboardMarkup:
+    """After the conversation ended: the operator's assessment of the client and a note (no "end" any more)."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=TONE_BUTTONS[tone], callback_data=f"ctone:{tone}") for tone in TONES],
+        [InlineKeyboardButton(text=NOTE_LABEL, callback_data="hnote")],
     ])
 
 
@@ -751,13 +762,18 @@ class TelegramSupportBot:
         await self._deliver(reply_to, bot, reply, log_client=False)
 
     async def watch_waits(self, bot: Bot, every: float = 5.0) -> None:
-        """Runs with the bot: checks for silent operators every few seconds (survives restarts via the DB)."""
+        """Runs with the bot: checks for silent operators every few seconds and for idle conversations
+        (survives restarts via the DB)."""
         while True:
             await asyncio.sleep(every)
             try:
                 await self.expire_waits(bot)
             except Exception as e:  # noqa: BLE001
                 log.warning("operator wait check failed: %s", e)
+            try:
+                await self.expire_idle(bot)
+            except Exception as e:  # noqa: BLE001
+                log.warning("idle conversation check failed: %s", e)
 
     async def to_incoming(self, messages: list[Message], bot: Bot) -> IncomingMessage:
         first = messages[0]
@@ -1030,21 +1046,65 @@ class TelegramSupportBot:
             self.handoffs.close_handoff(conversation.handoff_id)  # the operator is free for the next client
         self._pending.pop(str(client_chat_id), None)
         self._log(str(client_chat_id), LOG_SYSTEM,
-                  "Разговор завершил " + ("специалист" if by == OPERATOR else "клиент"), "text",
+                  {OPERATOR: "Разговор завершил специалист",
+                   TIMEOUT: f"Разговор завершён автоматически: нет сообщений {self.settings.session_idle_minutes} мин"}
+                  .get(by, "Разговор завершил клиент"), "text",
                   conversation.id, conversation.handoff_id)
         lang = _lang(conversation.language)
         text = t("rate_operator" if request.target == OPERATOR else "rate_bot", lang)
-        if by == OPERATOR:
-            text = f"{t('ended_by_operator', lang)}\n{text}"
+        if by in (OPERATOR, TIMEOUT):
+            text = f"{t('ended_by_operator' if by == OPERATOR else 'ended_by_timeout', lang)}\n{text}"
         # The rating buttons stay until the client rates; the answer's "end / menu" buttons go away.
         await self._push_buttons(bot, client_chat_id, text, rating_keyboard(request, lang), track=False)
-        if request.target == BOT:
-            # A conversation the bot handled alone: the AI assesses the client, for the support team only.
-            assessment = await self.engine.assess_client(str(client_chat_id))
-            if assessment is not None:
-                self.feedback.assess(CHANNEL, str(client_chat_id), "ai", assessment)
+        await self._assess_ended(bot, conversation, by)
         self.engine.end_conversation(str(client_chat_id))
         return True
+
+    async def _assess_ended(self, bot: Bot, conversation, by: str) -> None:
+        """After the close: the AI assesses the client from the whole conversation, and the operator who had it
+        is asked to assess the client too. For the support team only; the client never sees any of it."""
+        client_id = conversation.client_id
+        turns = [Turn("user" if m.sender == LOG_CLIENT else "assistant", m.text)
+                 for m in self.chatlog.for_conversation(conversation.id) if m.sender != LOG_SYSTEM and m.text]
+        assessment = await self.engine.assess_client(client_id, turns)
+        if assessment is not None:
+            self.feedback.assess(CHANNEL, client_id, "ai", assessment, conversation.handoff_id)
+        handoff = self.handoffs.get(conversation.handoff_id) if conversation.handoff_id is not None else None
+        if handoff is None:
+            return  # the bot handled it alone: there is no operator to ask
+        who = {OPERATOR: "специалист", TIMEOUT: f"автоматически, нет сообщений {self.settings.session_idle_minutes} мин"}
+        ai = render_assessment("ai", assessment) if assessment else "AI-оценка клиента: нет данных"
+        text = (f"🏁 Разговор с клиентом (эскалация #{handoff.id}) завершён — {who.get(by, 'клиент')}.\n"
+                f"Оцените клиента: как он общался? При необходимости добавьте заметку.\n\n"
+                f"{ai}\nУровень клиента: {self.feedback.level(CHANNEL, client_id)}")
+        try:
+            posted = await bot.send_message(int(handoff.support_chat_id), text[:4096],
+                                            reply_markup=closed_tone_keyboard(),
+                                            reply_to_message_id=int(handoff.support_message_id))
+        except Exception as e:  # noqa: BLE001 - the conversation is closed and rated anyway
+            log.warning("assessment request for hand-off %s not posted: %s", handoff.id, e)
+            return
+        # The tone and note buttons under this post work like the ones under the escalation post.
+        self.handoffs.link_post(handoff.id, handoff.support_chat_id, str(posted.message_id))
+
+    async def expire_idle(self, bot: Bot, now: datetime | None = None) -> int:
+        """Close the conversations nobody wrote in for SESSION_IDLE_MINUTES; returns how many."""
+        minutes = self.settings.session_idle_minutes
+        if minutes <= 0:
+            return 0
+        cutoff = (now or datetime.now(timezone.utc)) - timedelta(minutes=minutes)
+        closed = 0
+        for conversation in self.feedback.open_conversations(CHANNEL):
+            if conversation.client_id in self._pending:
+                continue  # still waiting for an operator: the operator wait decides first
+            last = max(filter(None, (conversation.opened_at, self.chatlog.last_at(CHANNEL, conversation.client_id))))
+            if datetime.fromisoformat(last) > cutoff:
+                continue
+            try:
+                closed += await self._end(bot, int(conversation.client_id), TIMEOUT)
+            except Exception as e:  # noqa: BLE001 - one failed chat must not stop the others
+                log.warning("idle conversation %s not closed: %s", conversation.id, e)
+        return closed
 
     async def _client_ends(self, bot: Bot, chat_id: int, lang: Lang) -> None:
         if not await self._end(bot, chat_id, "client"):

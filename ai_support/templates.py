@@ -166,6 +166,12 @@ _T: dict[str, dict[Lang, str]] = {
         Lang.RU: "Разговор завершён. Насколько помог специалист поддержки? Оцените:",
         Lang.EN: "The conversation has ended. How much did the support specialist help? Please rate:",
     },
+    "ended_by_timeout": {
+        Lang.UZ_LATN: "Uzoq vaqt xabar bo'lmadi.",
+        Lang.UZ_CYRL: "Узоқ вақт хабар бўлмади.",
+        Lang.RU: "Долго не было сообщений.",
+        Lang.EN: "There were no messages for a while.",
+    },
     "ended_by_operator": {
         Lang.UZ_LATN: "Qo'llab-quvvatlash xodimi suhbatni yakunladi.",
         Lang.UZ_CYRL: "Қўллаб-қувватлаш ходими суҳбатни якунлади.",

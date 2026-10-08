@@ -30,6 +30,9 @@ class Settings:
     operator_max_sessions: int = 1
     # A conversation nobody wrote in for this long no longer keeps its operator busy.
     operator_idle_minutes: int = 30
+    # An open conversation nobody wrote in for this long is closed: the client is asked to rate the
+    # service and the operator (and the AI) to assess the client. 0 turns it off.
+    session_idle_minutes: int = 30
     # Admin bot and its web panel (Telegram mini app), served through a Cloudflare Tunnel.
     admin_bot_token: str = ""
     # Telegram user ids allowed into the admin bot and panel.
@@ -56,6 +59,7 @@ class Settings:
             operator_wait_seconds=int(os.getenv("OPERATOR_WAIT_SECONDS", cls.operator_wait_seconds)),
             operator_max_sessions=max(1, int(os.getenv("OPERATOR_MAX_SESSIONS", cls.operator_max_sessions))),
             operator_idle_minutes=int(os.getenv("OPERATOR_IDLE_MINUTES", cls.operator_idle_minutes)),
+            session_idle_minutes=int(os.getenv("SESSION_IDLE_MINUTES", cls.session_idle_minutes)),
             admin_bot_token=os.getenv("ADMIN_BOT_TOKEN", ""),
             admin_ids=parse_ids(os.getenv("ADMIN_IDS", "")),
             admin_domain=os.getenv("ADMIN_DOMAIN", "").strip(),

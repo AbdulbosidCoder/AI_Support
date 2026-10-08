@@ -79,12 +79,13 @@ class SupportEngine:
         """The conversation ended: the next question starts without the old context (language is kept)."""
         self._store.clear(user_id)
 
-    async def assess_client(self, user_id: str) -> Assessment | None:
-        """Internal AI assessment of the client from the recent conversation; None if there is nothing to judge.
+    async def assess_client(self, user_id: str, history: list[Turn] | None = None) -> Assessment | None:
+        """Internal AI assessment of the client from the recent conversation (or `history`, e.g. the whole
+        ended conversation with an operator); None if there is nothing to judge.
 
         Only for the support team: it never changes what the bot answers.
         """
-        history = self._store.history(user_id)
+        history = history or self._store.history(user_id)
         if not any(turn.role == "user" and turn.text.strip() for turn in history):
             return None
         try:
