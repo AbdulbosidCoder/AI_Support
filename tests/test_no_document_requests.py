@@ -67,3 +67,36 @@ def test_learned_answer_asking_for_passport_never_reaches_prompt():
     kb = KB.with_learned([{"id": 1, "language": "ru", "topic": "antifraud/restriction",
                            "question": "Меня заблокировали", "answer": "Пришлите фото паспорта, разблокируем."}])
     assert "Пришлите фото паспорта" not in build_system_prompt(kb)
+
+
+IDENTITY_TOPICS = ["registration/access_blocked", "antifraud/restriction", "antifraud/registration_block",
+                   "antifraud/device_or_sim_restriction"]
+
+
+@pytest.mark.parametrize("tid", IDENTITY_TOPICS)
+def test_block_topics_ask_to_prepare_id_for_specialist(tid):
+    steps = " ".join(TOPICS[tid]["answer_steps"])
+    assert "Подготовьте паспорт или ID-карту и номер телефона" in steps, tid
+    assert "специалист сам свяжется" in steps, tid
+
+
+@pytest.mark.parametrize("tid", ["registration/phone_and_otp", "cards/card_sms_not_received",
+                                 "cards/card_blocked", "technical/server_error"])
+def test_ordinary_topics_do_not_mention_documents(tid):
+    steps = " ".join(TOPICS[tid]["answer_steps"])
+    assert "Подготовьте паспорт" not in steps and "ID-карт" not in steps, tid
+
+
+@pytest.mark.parametrize("text", [
+    "Pasport yoki ID-kartangizni va telefon raqamingizni tayyorlab turing, mutaxassis o'zi siz bilan bog'lanadi.",
+    "Подготовьте паспорт или ID-карту и номер телефона: специалист сам свяжется с вами.",
+    "Please have your passport or ID card and phone number ready; a specialist will contact you.",
+])
+def test_preparing_id_for_specialist_is_allowed(text):
+    assert not find_violations(text), find_violations(text)
+
+
+def test_prompt_limits_id_preparation_to_identity_topics():
+    p = build_system_prompt(KB)
+    assert "Только если в шагах темы сказано подготовить паспорт/ID-карту" in p
+    assert "не пришёл SMS-код) документы не упоминай" in p
