@@ -4,7 +4,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol
 
 import anthropic
@@ -34,12 +34,14 @@ class LLMError(Exception):
 class Turn:
     role: str  # "user" | "assistant"
     text: str
+    # Images the client sent with this message, resent so the model remembers them for the whole session.
+    images: list[Image] = field(default_factory=list)
 
 
 class SupportLLM(Protocol):
     async def answer(self, history: list[Turn], text: str, images: list[Image], note: str = "") -> ModelAnswer: ...
 
-    def set_system_prompt(self, system_prompt: str) -> None: ...
+    def set_system_prompt(self, system_prompt: str, schema: dict | None = None) -> None: ...
 
     async def assess(self, history: list[Turn]) -> Assessment: ...
 
@@ -50,17 +52,41 @@ NO_CAPTION_NOTE = (
 )
 
 
+SESSION_START = "(начало разговора)"
+
+
+def _image_block(img: Image) -> dict:
+    return {"type": "image", "source": {"type": "base64", "media_type": img.media_type,
+                                        "data": base64.standard_b64encode(img.data).decode("ascii")}}
+
+
+def history_messages(history: list[Turn]) -> list[dict]:
+    """The session so far as API messages: the client's messages with their images, the answers of the bot
+    and the operators. Consecutive messages of one side are merged, and the first message is the client's."""
+    messages: list[dict] = []
+    for turn in history:
+        content: list[dict] = [_image_block(img) for img in turn.images]
+        text = turn.text.strip()
+        if turn.role == "user" and text:
+            text = f"<client_message>\n{text}\n</client_message>"
+        if text or not content:
+            content.append({"type": "text", "text": text or "…"})
+        if messages and messages[-1]["role"] == turn.role:
+            messages[-1]["content"].extend(content)
+        else:
+            messages.append({"role": turn.role, "content": content})
+    if messages and messages[0]["role"] != "user":
+        messages.insert(0, {"role": "user", "content": [{"type": "text", "text": SESSION_START}]})
+    if messages:
+        # The session so far is the same on the next turn: cache it (the system prompt is the first breakpoint).
+        messages[-1]["content"][-1]["cache_control"] = {"type": "ephemeral"}
+    return messages
+
+
 def build_user_content(text: str, images: list[Image], note: str = "") -> list[dict]:
     content: list[dict] = []
     for img in images:
-        content.append({
-            "type": "image",
-            "source": {
-                "type": "base64",
-                "media_type": img.media_type,
-                "data": base64.standard_b64encode(img.data).decode("ascii"),
-            },
-        })
+        content.append(_image_block(img))
     if text.strip():
         content.append({"type": "text", "text": f"<client_message>\n{text.strip()}\n</client_message>"})
     elif images:
@@ -107,13 +133,20 @@ class ClaudeSupportLLM:
         self._model = model
         self._effort = effort
 
-    def set_system_prompt(self, system_prompt: str) -> None:
-        """The knowledge base changed (an operator answer was approved): use it from the next request."""
+    def set_system_prompt(self, system_prompt: str, schema: dict | None = None) -> None:
+        """The knowledge base changed (an operator answer was approved, an admin saved a case): use it from
+        the next request. `schema` lists the topics, so it changes with the cases."""
         self._system = system_prompt
+        if schema is not None:
+            self._schema = schema
 
     async def answer(self, history: list[Turn], text: str, images: list[Image], note: str = "") -> ModelAnswer:
-        messages = [{"role": t.role, "content": t.text} for t in history]
-        messages.append({"role": "user", "content": build_user_content(text, images, note)})
+        messages = history_messages(history)
+        content = build_user_content(text, images, note)
+        if messages and messages[-1]["role"] == "user":
+            messages[-1]["content"].extend(content)  # e.g. the client wrote while an operator was answering
+        else:
+            messages.append({"role": "user", "content": content})
         data = await self._structured(self._system, messages, self._schema)
         try:
             return ModelAnswer(**{k: data[k] for k in ModelAnswer.__dataclass_fields__})

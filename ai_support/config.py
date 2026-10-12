@@ -22,7 +22,10 @@ class Settings:
     # Send the client's language (and a prompt in it) with each voice message; off: the service guesses.
     stt_language_hint: bool = True
     kb_dir: Path = ROOT / "data" / "knowledge_base"
-    history_turns: int = 6
+    # How many client-answer pairs of the current session the model sees: the whole session, in practice.
+    history_turns: int = 100
+    # Client images of the session resent to the model with the history (the latest ones; older become a note).
+    history_images: int = 20
     # SQLite file with registered clients and their chosen language.
     db_path: Path = ROOT / "data" / "db" / "bot.sqlite3"
     # A new conversation goes to a free operator first; the AI answers if nobody is free or the
@@ -58,6 +61,7 @@ class Settings:
             stt_language_hint=os.getenv("STT_LANGUAGE_HINT", "1").strip().lower() not in ("0", "false", "no", "off"),
             kb_dir=Path(os.getenv("KB_DIR", str(cls.kb_dir))),
             history_turns=int(os.getenv("HISTORY_TURNS", cls.history_turns)),
+            history_images=int(os.getenv("HISTORY_IMAGES", cls.history_images)),
             db_path=Path(os.getenv("DB_PATH", str(cls.db_path))),
             operator_first=os.getenv("OPERATOR_FIRST", "0").strip().lower() in ("1", "true", "yes", "on"),
             operator_wait_seconds=int(os.getenv("OPERATOR_WAIT_SECONDS", cls.operator_wait_seconds)),

@@ -10,7 +10,7 @@ from .feedback import Assessment
 from .images import MAX_IMAGES_PER_MESSAGE, prepare_image
 from .language import detect_language, is_small_talk
 from .llm import LLMError, ModelAnswer, SupportLLM, Turn
-from .models import Audio, BotReply, IncomingMessage, Lang
+from .models import Audio, BotReply, Image, IncomingMessage, Lang
 from .pii import mask_pii
 from .stt import SpeechToText, STTError
 from .templates import strip_emoji, t
@@ -33,10 +33,28 @@ def strip_greeting(answer: str) -> str:
     rest = _GREETING.sub("", answer, count=1)
     return rest[:1].upper() + rest[1:] if rest.strip() else answer
 
-class ConversationStore:
-    """Short per-user text history (in memory). Replace with a DB for multi-instance deploys."""
+OLD_IMAGE_NOTE = "[клиент присылал изображение раньше в этом разговоре]"
 
-    def __init__(self, max_turns: int = 6):
+
+def fit_history(turns: list[Turn], max_images: int) -> list[Turn]:
+    """The session history with at most `max_images` images: the latest ones stay, older ones become a note."""
+    left = max(0, max_images)
+    out: list[Turn] = []
+    for turn in reversed(turns):
+        if turn.images:
+            keep = turn.images[len(turn.images) - left:] if left else []
+            left -= len(keep)
+            if len(keep) < len(turn.images):
+                turn = Turn(turn.role, f"{turn.text}\n{OLD_IMAGE_NOTE}".strip(), keep)
+        out.append(turn)
+    return out[::-1]
+
+
+class ConversationStore:
+    """The current session's messages per user, with the client's images (in memory). The channel may pass
+    the session from its own log instead (see SupportEngine.handle), which survives restarts."""
+
+    def __init__(self, max_turns: int = 100):
         self._turns: dict[str, deque[Turn]] = defaultdict(lambda: deque(maxlen=max_turns * 2))
         self._lang: dict[str, Lang] = {}
         self._videos_sent: dict[str, set[str]] = defaultdict(set)
@@ -47,8 +65,8 @@ class ConversationStore:
             turns.pop(0)
         return turns
 
-    def add(self, user_id: str, client_text: str, bot_text: str) -> None:
-        self._turns[user_id].append(Turn("user", mask_pii(client_text)))
+    def add(self, user_id: str, client_text: str, bot_text: str, images: list[Image] = ()) -> None:
+        self._turns[user_id].append(Turn("user", mask_pii(client_text), list(images)))
         self._turns[user_id].append(Turn("assistant", bot_text))
 
     def clear(self, user_id: str) -> None:
@@ -70,11 +88,14 @@ class ConversationStore:
 
 class SupportEngine:
     def __init__(self, llm: SupportLLM, stt: SpeechToText, store: ConversationStore | None = None,
-                 videos: VideoLibrary | None = None):
+                 videos: VideoLibrary | None = None, max_history_images: int = 20):
         self._llm = llm
         self._stt = stt
         self._store = store or ConversationStore()
         self._videos = videos or VideoLibrary()
+        self._max_images = max_history_images
+        # Topics whose answer always goes to a person, whatever the model decided.
+        self._always_escalate: set[str] = set()
 
     def welcome(self, user_id: str, hint: str = "") -> str:
         return t("welcome", self._store.language(user_id) or detect_language(hint))
@@ -83,8 +104,14 @@ class SupportEngine:
         """The client chose a language: use it for fixed replies until their messages say otherwise."""
         self._store.set_language(user_id, lang)
 
-    def set_system_prompt(self, system_prompt: str) -> None:
-        self._llm.set_system_prompt(system_prompt)
+    def set_system_prompt(self, system_prompt: str, schema: dict | None = None) -> None:
+        if schema is None:
+            self._llm.set_system_prompt(system_prompt)
+        else:
+            self._llm.set_system_prompt(system_prompt, schema)
+
+    def set_always_escalate(self, topics: set[str]) -> None:
+        self._always_escalate = set(topics)
 
     def recent_turns(self, user_id: str) -> list[Turn]:
         """The client's recent conversation (PII already masked), saved with a hand-off."""
@@ -126,7 +153,10 @@ class SupportEngine:
         """
         return await self._stt.transcribe(audio, self._voice_language(user_id, caption, language))
 
-    async def handle(self, msg: IncomingMessage) -> BotReply:
+    async def handle(self, msg: IncomingMessage, history: list[Turn] | None = None) -> BotReply:
+        """Answer one message. `history` is the current session so far, as the channel logged it (every
+        message of the client, the bot and the operators, with the client's images); by default the engine
+        uses what it remembers itself."""
         # The language the client last wrote in, else the one they chose in the channel.
         known_lang = self._store.language(msg.user_id) or msg.language
         text = msg.text or ""
@@ -170,7 +200,8 @@ class SupportEngine:
             note = (f"Текст клиента распознан из голосового сообщения: возможны ошибки распознавания, "
                     f"понимай по смыслу. Язык ответа: {fallback_lang.value}.")
         try:
-            ans = await self._llm.answer(self._store.history(msg.user_id), text, images, note)
+            past = self._store.history(msg.user_id) if history is None else list(history)
+            ans = await self._llm.answer(fit_history(past, self._max_images - len(images)), text, images, note)
         except LLMError as e:
             log.error("llm failed: %s", e)
             return BotReply(t("error", fallback_lang), fallback_lang, escalate=True,
@@ -179,7 +210,7 @@ class SupportEngine:
         reply = self._postprocess(ans, fallback_lang, restricted, text)
         reply.videos = self._videos_for(msg.user_id, reply)
         self._store.set_language(msg.user_id, reply.language)
-        self._store.add(msg.user_id, _history_text(text, len(images), reply.screen_id), reply.text)
+        self._store.add(msg.user_id, _history_text(text, len(images), reply.screen_id), reply.text, images)
         return reply
 
     def _videos_for(self, user_id: str, reply: BotReply):
@@ -217,6 +248,9 @@ class SupportEngine:
         if restricted:
             escalate = True
             reason = reason or f"client asks: {restricted}"
+        if ans.topic in self._always_escalate and not escalate:
+            escalate = True
+            reason = f"topic {ans.topic} always goes to a person"
 
         if escalate and t("handoff", lang) not in answer and not guard:
             answer = f"{answer}\n\n{t('handoff', lang)}"

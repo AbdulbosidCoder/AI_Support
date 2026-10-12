@@ -17,6 +17,7 @@ from pathlib import Path
 from aiohttp import ClientSession, ClientTimeout, web
 
 from ..botapi import Call, telegram_call
+from ..cases import CaseError
 from ..guides import MAX_IMAGE_BYTES, GuideError
 from ..operators import OperatorError
 from .auth import telegram_user
@@ -240,6 +241,55 @@ async def move_quick_image(request: web.Request) -> web.Response:
     return _json(request.app[DATA].quick_guide(qid))
 
 
+# --- support cases: instructions the bot answers by -----------------------------------------------
+
+def _case_error(e: CaseError) -> web.Response:
+    if e.code == "forbidden":
+        found = [{"category": v.category, "fragment": v.fragment, "where": w} for v, w in zip(e.violations, e.where)]
+        return _json({"error": "forbidden", "violations": found}, 400)
+    return _json({"error": e.code}, 404 if e.code == "not_found" else 400)
+
+
+async def cases(request: web.Request) -> web.Response:
+    return _json(request.app[DATA].cases_overview())
+
+
+async def save_case(request: web.Request) -> web.Response:
+    """Create a case (POST /api/cases) or update one (PUT /api/cases/{id}).
+
+    Nothing is saved if a text the bot would say holds something it must never say (ai_support/guardrails.py).
+    The client bot picks the change up with the next question.
+    """
+    try:
+        body = await request.json()
+    except ValueError:
+        return _json({"error": "bad_json"}, 400)
+    if not isinstance(body, dict):
+        return _json({"error": "bad_json"}, 400)
+    case_id = request.match_info.get("id")
+    if case_id is not None and not case_id.isdigit():
+        return _json({"error": "not_found"}, 404)
+    try:
+        case = request.app[DATA].cases.save(
+            int(case_id) if case_id else None, str(body.get("section") or ""), str(body.get("title") or ""),
+            body.get("steps"), body.get("forbidden"), str(body.get("escalate") or "if"),
+            str(body.get("escalate_if") or ""), bool(body.get("active", True)), by=_admin_name(request[ADMIN_USER]))
+    except CaseError as e:
+        return _case_error(e)
+    log.info("case %s saved by admin %s", case.id, request[ADMIN_USER]["id"])
+    return _json(case.to_dict())
+
+
+async def delete_case(request: web.Request) -> web.Response:
+    case_id = request.match_info["id"]
+    try:
+        request.app[DATA].cases.delete(int(case_id) if case_id.isdigit() else 0)
+    except CaseError as e:
+        return _case_error(e)
+    log.info("case %s deleted by admin %s", case_id, request[ADMIN_USER]["id"])
+    return _json({"ok": True})
+
+
 def _admin_name(user: dict) -> str:
     return " ".join(x for x in (user.get("first_name"), user.get("last_name")) if x) or user.get("username") or "Админ"
 
@@ -394,4 +444,8 @@ def create_app(data: AdminData, bot_token: str, admin_ids: frozenset[int], clien
     app.router.add_get("/api/quick/{qid}/images/{id}", quick_image)
     app.router.add_delete("/api/quick/{qid}/images/{id}", delete_quick_image)
     app.router.add_post("/api/quick/{qid}/images/{id}/move", move_quick_image)
+    app.router.add_get("/api/cases", cases)
+    app.router.add_post("/api/cases", save_case)
+    app.router.add_put("/api/cases/{id}", save_case)
+    app.router.add_delete("/api/cases/{id}", delete_case)
     return app

@@ -1,19 +1,22 @@
 """What the admin bot and panel read: clients, sessions as chats, operators and their activity.
 
 Reads the client bot's SQLite database (same DB_PATH, shared Docker volume). The admin side writes
-the operator list and the quick-question guides (ai_support/guides.py). A session is a conversation
+the operator list, the quick-question guides (ai_support/guides.py) and the support cases (ai_support/cases.py). A session is a conversation
 (ai_support/feedback.py); its chat is the client's logged messages after the previous conversation ended, up to this one's end.
 Sessions from before the chat log existed are rebuilt from the saved hand-off and operator replies.
 """
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from ..cases import SECTIONS, CaseStore
 from ..chatlog import BOT, CLIENT, OPERATOR, SYSTEM, ChatLog
+from ..config import Settings
 from ..feedback import FeedbackStore
 from ..guides import Guide, GuideStore
 from ..handoffs import HandoffStore
@@ -21,6 +24,8 @@ from ..menu import CATEGORIES, quick_question
 from ..models import Lang
 from ..operators import Operator, OperatorStore, is_phone
 from ..users import UserStore
+
+log = logging.getLogger(__name__)
 
 
 def _langs(values: dict) -> dict:
@@ -42,6 +47,7 @@ class AdminData:
         self.chatlog = ChatLog(path)
         self.operators = OperatorStore(path)
         self.guides = GuideStore(path)
+        self.cases = CaseStore(path)
         self._db = sqlite3.connect(str(path), check_same_thread=False, timeout=10)
         self._db.row_factory = sqlite3.Row
         self._lock = threading.Lock()
@@ -496,8 +502,25 @@ class AdminData:
             return [_chat(dict(r)) for r in reversed(rows)], True
         return [_chat(dict(r)) for r in reversed(rows)], False
 
+    # --- support cases: instructions for the bot ------------------------------------------------
+
+    def cases_overview(self, kb_dir: Path | None = None) -> dict:
+        """The cases added in the panel and, read-only, the call-center cases already in the knowledge base."""
+        builtin = []
+        try:
+            faq = json.loads(((kb_dir or Settings().kb_dir) / "faq.json").read_text(encoding="utf-8"))
+            builtin = [{"topic": f'{t["section"]}/{t["id"]}', "section": t["section"],
+                        "section_label": SECTIONS.get(t["section"], t["section"]), "title": t["title"],
+                        "steps": t["answer_steps"], "forbidden": t.get("forbidden", []),
+                        "escalate_if": t.get("escalate_if", "")}
+                       for t in faq["topics"] if "call_center_cases" in t.get("source", "")]
+        except (OSError, ValueError, KeyError) as e:
+            log.warning("knowledge base not read for the panel: %s", e)
+        return {"sections": [{"id": k, "label": v} for k, v in SECTIONS.items()],
+                "cases": [c.to_dict() for c in self.cases.all()], "builtin": builtin}
+
     def close(self) -> None:
-        for store in (self.users, self.handoffs, self.feedback, self.chatlog, self.operators):
+        for store in (self.users, self.handoffs, self.feedback, self.chatlog, self.operators, self.cases):
             store.close()
         self._db.close()
 
