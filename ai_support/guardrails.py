@@ -3,7 +3,8 @@
 1. Restricted requests (refund, cancellation, unblocking, limit/data change, antifraud
    internals) always go to a human.
 2. Forbidden answers (promised refunds/timelines, confirmed success, unblocking, antifraud
-   criteria) are never sent: the answer is replaced with a safe hand-off.
+   criteria, asking for passport/ID documents in the chat) are never sent: the answer is replaced
+   with a safe hand-off.
 """
 from __future__ import annotations
 
@@ -85,6 +86,17 @@ FORBIDDEN_ANSWERS: dict[str, list[str]] = {
         r"(sim|сим|устройств|телефон)\S*(\s+\S+){0,2}?\s+клонирован", r"(обнаруж|выявл)\S*\s+клонирован",
         r"(sim|telefon|qurilma)\S*(\s+\S+)?\s+klonlangan", r"(сим|телефон|қурилма)\S*(\s+\S+)?\s+клонланган",
         r"(sim|device|phone)\S*\s+(was\s+|has\s+been\s+)?cloned",
+    ],
+    # asking the client to send identity documents into the chat (e.g. "send your passport" after a block)
+    "requested_documents": [
+        r"(?<!не )(пришлите|отправьте|скиньте|прикрепите|предоставьте)[\s,]+"
+        r"([^\s.!?(]+\s+){0,4}?(паспорт|id[- ]?карт|документ|селфи|ПИНФЛ)",
+        r"(pasport|id[- ]?karta|hujjat|selfi|jshshir|pinfl)\S*(\s+[^\s.!?(]+){0,3}?\s+"
+        r"(yuboring|jo'nating|tashlang|taqdim\s+eting)",
+        r"(паспорт|id[- ]?карта|ҳужжат|селфи|жшшир|пинфл)\S*(\s+[^\s.!?(]+){0,3}?\s+"
+        r"(юборинг|жўнатинг|ташланг|тақдим\s+этинг)",
+        r"(?<!not )(?<!n't )(?<!never )(send|provide|attach)\s+([^\s.!?(]+\s+){0,5}?"
+        r"(passport|id\s+card|document|selfie|pinfl)",
     ],
     "financial_advice": [
         r"(советую|рекомендую)\s+(вложить|инвестир|купить\s+акци|взять\s+кредит)",
