@@ -57,7 +57,7 @@
   /* Statistics: one accent hue for every bar, values in text colors. */
   .panel { background: var(--bg); border-radius: 12px; padding: 12px; margin-top: 10px; }
   .panel h3 { margin: 0 0 10px; font-size: 15px; }
-  .panel .sub { color: var(--hint); font-size: 12px; font-weight: 400; margin-left: 6px; }
+  .panel .sub, h2 .sub { color: var(--hint); font-size: 12px; font-weight: 400; margin-left: 6px; }
   .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 8px; }
   .kpi b { display: block; font-size: 20px; font-variant-numeric: tabular-nums; }
   .kpi span { color: var(--hint); font-size: 12px; }
@@ -210,6 +210,10 @@
   .check input { width: auto; }
   .savebar { position: sticky; bottom: 0; display: flex; gap: 8px; justify-content: space-between; padding: 10px 0;
              background: linear-gradient(transparent, var(--bg2) 30%); }
+  /* Support cases. */
+  details.row .title { white-space: normal; cursor: pointer; }
+  details.row ol { margin: 6px 0; padding-left: 20px; }
+  details.row .muted { margin-top: 4px; }
   .preview.tgchat { min-height: 0; border-radius: 12px; overflow: hidden; }
   .preview .tgmsgs { padding: 10px 10px 14px; }
   .preview .kb { align-self: flex-start; display: flex; gap: 2px; width: min(78%, 420px); margin-top: 2px; }
@@ -224,6 +228,7 @@
   <button data-tab="operators">Операторы</button>
   <button data-tab="clients">Клиенты</button>
   <button data-tab="quick">Вопросы</button>
+  <button data-tab="cases">Кейсы</button>
 </nav></header>
 <main id="view"><div class="empty">Загрузка…</div></main>
 <script>
@@ -261,9 +266,9 @@ function route() {
   clearInterval(timer);
   document.body.classList.remove("in-chat");
   const [name, arg] = (location.hash.slice(1) || "overview").split("=");
-  const tab = {session: "sessions", client: "clients", guide: "quick"}[name] || name;
+  const tab = {session: "sessions", client: "clients", guide: "quick", "case": "cases"}[name] || name;
   document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("on", b.dataset.tab === tab));
-  const pages = {overview, sessions, session, operators, clients, client, quick, guide};
+  const pages = {overview, sessions, session, operators, clients, client, quick, guide, cases, "case": caseEdit};
   window.scrollTo(0, 0);
   (pages[name] || overview)(arg).catch(fail);
 }
@@ -793,9 +798,133 @@ async function guide(arg) {
   drawSteps(); draw(); drawShots();
 }
 
+// --- support cases: instructions the bot answers by (like the call-center cases) -------------------
+const CASE_ERR = {no_title: "Опишите ситуацию клиента", no_steps: "Добавьте хотя бы один шаг решения",
+  no_escalate_if: "Напишите, когда передавать специалисту", bad_section: "Выберите тему",
+  too_long_title: "Описание ситуации слишком длинное (до 300 знаков)", too_long_step: "Шаг слишком длинный (до 1000 знаков)",
+  too_many_steps: "Не больше 15 шагов", too_many_forbidden: "Не больше 10 запретов", not_found: "Кейс не найден"};
+const ESC_LABEL = {never: "не передавать", "if": "передавать, если…", always: "всегда передавать"};
+const caseWhere = w => { const [field, n] = w.split(".");
+  return {title: "ситуация", escalate_if: "когда передавать", steps: "шаг " + n}[field] || w; };
+
+async function cases() {
+  const o = await api("/api/cases");
+  const bySection = list => o.sections.map(s => [s, list.filter(c => c.section === s.id)]).filter(([, l]) => l.length);
+  view.innerHTML = `<p class="muted">Кейс — инструкция для бота на типовую ситуацию клиента, как в таблице кейсов
+      колл-центра: тема, ситуация и что делать. Бот не отправляет кейс клиенту как есть, а отвечает по нему своими словами,
+      когда клиент описывает такую ситуацию. Изменения бот подхватывает со следующего вопроса.
+      Жёсткие правила важнее кейса: бот не обещает возврат и сроки, не подтверждает платежи и не раскрывает антифрод.</p>
+    <button class="btn" onclick="location.hash='case=new'">+ Добавить кейс</button>
+    <h2>Добавленные в панели</h2>
+    ${o.cases.length ? bySection(o.cases).map(([s, list]) => `<h3>${esc(s.label)}</h3><div class="list">${list.map(c => `
+      <div class="row" onclick="location.hash='case=${c.id}'">
+        <div class="grow"><div class="title">${esc(c.title)}</div>
+          <div class="muted">${c.active ? '<span class="pill ok">работает</span>' : '<span class="pill off">выключен</span>'}
+            <span class="pill">${esc(ESC_LABEL[c.escalate])}</span>
+            · шагов ${c.steps.length}${c.updated_at ? " · изменено " + esc(when(c.updated_at)) + (c.updated_by ? ", " + esc(c.updated_by) : "") : ""}</div></div>
+        <span class="muted">›</span></div>`).join("")}</div>`).join("")
+      : '<div class="empty">Пока нет. Добавьте кейс — бот начнёт отвечать по нему.</div>'}
+    <h2>Кейсы колл-центра в базе знаний <span class="sub">${o.builtin.length}, только просмотр</span></h2>
+    ${bySection(o.builtin).map(([s, list]) => `<h3>${esc(s.label)}</h3><div class="list">${list.map(c => `
+      <details class="row" style="display:block"><summary class="title">${esc(c.title)}</summary>
+        <ol>${c.steps.map(x => `<li>${esc(x)}</li>`).join("")}</ol>
+        ${c.forbidden.length ? `<div class="muted">Нельзя: ${esc(c.forbidden.join(" "))}</div>` : ""}
+        ${c.escalate_if ? `<div class="muted">Передать специалисту: ${esc(c.escalate_if)}</div>` : ""}</details>`).join("")}</div>`).join("")}`;
+}
+
+async function caseEdit(arg) {
+  const isNew = arg === "new";
+  const o = await api("/api/cases");
+  const c = isNew ? {id: null, section: o.sections[0].id, title: "", steps: [""], forbidden: [], escalate: "if", escalate_if: "", active: true}
+    : o.cases.find(x => String(x.id) === arg);
+  if (!c) { view.innerHTML = '<div class="empty">Кейс не найден</div>'; return; }
+  const ed = {steps: [...c.steps], forbidden: [...c.forbidden]};
+  view.innerHTML = `<button class="back" onclick="history.back()">‹ Назад</button>
+    <div class="panel"><b style="font-size:17px">${isNew ? "Новый кейс" : "Кейс №" + c.id}</b></div>
+    <div class="panel">
+      <label class="field"><span>Тема</span><select id="csection">${o.sections.map(s =>
+        `<option value="${esc(s.id)}">${esc(s.label)}</option>`).join("")}</select></label>
+      <label class="field"><span>Ситуация: что случилось у клиента</span>
+        <textarea id="ctitle" class="big" style="min-height:70px" maxlength="300" placeholder="Например: не приходит SMS-код при оплате квартиры"></textarea></label>
+      <div class="field"><span>Решение: что бот делает и отвечает, по шагам</span><div id="csteps"></div>
+        <button type="button" class="btn ghost" id="caddstep" style="justify-self:start">+ Шаг</button></div>
+      <div class="field"><span>Нельзя: чего бот не должен говорить или делать в этом кейсе</span><div id="cforb"></div>
+        <button type="button" class="btn ghost" id="caddforb" style="justify-self:start">+ Запрет</button></div>
+      <label class="field"><span>Передавать специалисту</span><select id="cesc">
+        <option value="never">Не передавать: бот решает сам</option>
+        <option value="if">Передавать, если…</option>
+        <option value="always">Всегда передавать</option></select></label>
+      <label class="field" id="cescifrow"><span>Когда передавать (или что уточнить у клиента перед передачей)</span>
+        <input id="cescif" maxlength="1000" placeholder="Например: после этих шагов SMS так и не пришло"></label>
+      <div class="muted" id="cafnote" style="display:none">Кейсы по антифроду всегда передаются специалисту, а бот не называет причины ограничения.</div>
+    </div>
+    <label class="check"><input type="checkbox" id="cactive"> Кейс работает (бот отвечает по нему)</label>
+    <div id="cerr"></div>
+    <div class="savebar"><button class="btn" id="csave">Сохранить</button>
+      ${isNew ? "" : '<button class="btn ghost danger" id="cdel">Удалить кейс</button>'}</div>`;
+  const $ = id => document.getElementById(id);
+  $("csection").value = c.section; $("ctitle").value = c.title; $("cesc").value = c.escalate;
+  $("cescif").value = c.escalate_if; $("cactive").checked = c.active;
+  const list = (key, box, placeholder) => {
+    const items = ed[key];
+    $(box).innerHTML = items.map((s, i) => `<div class="step"><b>${i + 1}</b>
+      <input data-i="${i}" value="${esc(s)}" placeholder="${placeholder} ${i + 1}" maxlength="1000">
+      <div class="acts" style="flex-wrap:nowrap"><button type="button" class="icon" data-up="${i}" ${i ? "" : "disabled"} aria-label="Выше">↑</button>
+        <button type="button" class="icon" data-rm="${i}" aria-label="Удалить">×</button></div></div>`).join("")
+      || '<div class="muted" style="margin-bottom:6px">Пока пусто</div>';
+    $(box).querySelectorAll("input[data-i]").forEach(inp => inp.oninput = () => { items[+inp.dataset.i] = inp.value; });
+    $(box).querySelectorAll("[data-rm]").forEach(b => b.onclick = () => { items.splice(+b.dataset.rm, 1); list(key, box, placeholder); });
+    $(box).querySelectorAll("[data-up]").forEach(b => b.onclick = () => { const i = +b.dataset.up;
+      [items[i - 1], items[i]] = [items[i], items[i - 1]]; list(key, box, placeholder); });
+  };
+  const drawSteps = () => list("steps", "csteps", "Шаг");
+  const drawForb = () => list("forbidden", "cforb", "Запрет");
+  const add = (key, draw, box) => () => { ed[key].push(""); draw();
+    const all = $(box).querySelectorAll("input[data-i]"); all[all.length - 1].focus(); };
+  $("caddstep").onclick = add("steps", drawSteps, "csteps");
+  $("caddforb").onclick = add("forbidden", drawForb, "cforb");
+  const drawEsc = () => {
+    const af = $("csection").value === "antifraud";
+    if (af) $("cesc").value = "always";
+    $("cesc").disabled = af; $("cafnote").style.display = af ? "" : "none";
+    $("cescifrow").style.display = $("cesc").value === "never" ? "none" : "";
+  };
+  $("csection").onchange = drawEsc; $("cesc").onchange = drawEsc;
+  $("csave").onclick = async () => {
+    const body = {section: $("csection").value, title: $("ctitle").value, escalate: $("cesc").value,
+      escalate_if: $("cesc").value === "never" ? "" : $("cescif").value, active: $("cactive").checked,
+      steps: ed.steps.filter(s => s.trim()), forbidden: ed.forbidden.filter(s => s.trim())};
+    $("cerr").innerHTML = "";
+    try {
+      const saved = await api(isNew ? "/api/cases" : `/api/cases/${c.id}`, {method: isNew ? "POST" : "PUT", body: JSON.stringify(body)});
+      if (isNew) { history.replaceState(null, "", "#case=" + saved.id); return route(); }
+      notify("Сохранено");
+    } catch (err) {
+      if (err.message === "forbidden") {
+        $("cerr").innerHTML = `<div class="errors"><b>Не сохранено: так боту отвечать нельзя</b><ul>${err.body.violations.map(v =>
+          `<li>«${esc(v.fragment)}» — ${esc(FORBIDDEN[v.category] || v.category)} (${esc(caseWhere(v.where))})</li>`).join("")}</ul>
+          <div class="muted" style="margin-top:6px">Перепишите без обещаний: например, «специалист проверит операцию и сообщит результат».
+          Запреты пишите в блоке «Нельзя».</div></div>`;
+        $("cerr").scrollIntoView({behavior: "smooth", block: "center"});
+      } else notify(CASE_ERR[err.message] || "Не сохранено: " + err.message);
+    }
+  };
+  const del = $("cdel");
+  if (del) del.onclick = async () => {
+    if (!del.classList.contains("sure")) {
+      del.classList.add("sure"); del.textContent = "Точно удалить?";
+      setTimeout(() => { del.classList.remove("sure"); del.textContent = "Удалить кейс"; }, 4000);
+      return;
+    }
+    await api(`/api/cases/${c.id}`, {method: "DELETE"}).catch(err => notify("Не удалено: " + err.message));
+    location.hash = "cases";
+  };
+  drawSteps(); drawForb(); drawEsc();
+}
+
 if (tg && tg.BackButton) {
   tg.BackButton.onClick(() => history.back());
-  window.addEventListener("hashchange", () => /^#(session|client|guide)=/.test(location.hash)
+  window.addEventListener("hashchange", () => /^#(session|client|guide|case)=/.test(location.hash)
     ? tg.BackButton.show() : tg.BackButton.hide());
 }
 route();

@@ -40,6 +40,7 @@ import asyncio
 import logging
 import re
 import time
+from collections import OrderedDict
 from datetime import datetime, timedelta, timezone
 
 from aiogram import Bot, Dispatcher, F, Router
@@ -65,10 +66,11 @@ from aiogram.types import (
 )
 
 from ..botapi import telegram_call
+from ..cases import CaseStore
 from ..chatlog import BOT as LOG_BOT, CLIENT as LOG_CLIENT, OPERATOR as LOG_OPERATOR, SYSTEM as LOG_SYSTEM, ChatLog
 from ..config import Settings
 from ..engine import SupportEngine
-from ..factory import build_engine, load_knowledge
+from ..factory import always_escalate, build_engine, load_knowledge
 from ..feedback import (
     BOT, OPERATOR, TIMEOUT, TONE_LABELS, TONES, Assessment, FeedbackStore, RatingError, RatingRequest, client_level,
     opens_conversation, render_assessment, render_rating,
@@ -84,7 +86,8 @@ from ..menu import (
 )
 from ..models import Audio, BotReply, Image, IncomingMessage, Lang, VideoAttachment
 from ..operators import Operator, OperatorStore, pick_free
-from ..prompt import build_system_prompt
+from ..images import prepare_image
+from ..prompt import build_system_prompt, reply_schema
 from ..staff import StaffNotifier
 from ..templates import t
 from ..pii import mask_pii
@@ -318,7 +321,8 @@ class TelegramSupportBot:
     def __init__(self, settings: Settings, engine: SupportEngine, users: UserStore | None = None,
                  handoffs: HandoffStore | None = None, feedback: FeedbackStore | None = None,
                  chatlog: ChatLog | None = None, operators: OperatorStore | None = None,
-                 guides: GuideStore | None = None, staff: StaffNotifier | None = None):
+                 guides: GuideStore | None = None, staff: StaffNotifier | None = None,
+                 cases: CaseStore | None = None):
         self.settings = settings
         # Tells operators and admins about clients in their chat with the admin bot (ADMIN_BOT_TOKEN).
         self.staff = staff
@@ -334,6 +338,11 @@ class TelegramSupportBot:
         self.operators = operators or OperatorStore(":memory:")
         # Answers to quick questions written in the admin panel: text, steps and screenshots.
         self.guides = guides or GuideStore(":memory:")
+        # Cases admins add in the panel: instructions in the model's knowledge base (rebuilt when they change).
+        self.cases = cases or CaseStore(":memory:")
+        self._cases_version = self.cases.version()
+        # Telegram file id -> the client's image as the model gets it (None: not an image), for the session history.
+        self._history_images: OrderedDict[str, Image | None] = OrderedDict()
         self._albums: MediaGroupCollector[tuple[Message, Bot]] | None = None
         # Client chat -> (message id, is a menu) of the bot's latest message with inline buttons. Only that
         # message keeps buttons: older ones lose them, and a menu is edited in place instead of re-sent.
@@ -643,7 +652,7 @@ class TelegramSupportBot:
             return
         await bot.send_chat_action(message.chat.id, ChatAction.TYPING)
         self._fresh_start(chat_id)
-        reply = await self.engine.handle(IncomingMessage(user_id=str(message.chat.id), text=question))
+        reply = await self._handle(bot, IncomingMessage(user_id=str(message.chat.id), text=question))
         await self._deliver(message, bot, reply, from_user)
 
     async def _send_guide(self, message: Message, bot: Bot, q, guide: Guide, lang: Lang, question: str,
@@ -754,7 +763,7 @@ class TelegramSupportBot:
         self._fresh_start(client_id)
         msg = await self.to_incoming(messages, bot)
         msg.language = user.language if user else None
-        reply = await self.engine.handle(msg)
+        reply = await self._handle(bot, msg)
         await self._deliver(first, bot, reply, client_kind=message_kind(first), files=media_files(messages))
         if opens_conversation(reply):
             self._ai_first.discard(client_id)
@@ -945,7 +954,8 @@ class TelegramSupportBot:
         msg = await self.to_incoming(messages, bot) if messages else IncomingMessage(user_id=client_id, text=text)
         msg.user_id, msg.text = client_id, text or msg.text
         self.engine.remember_language(client_id, lang)
-        reply = await self.engine.handle(msg)
+        # The waiting messages are already in the session's log: they are the question now, not the history.
+        reply = await self._handle(bot, msg, pending=True, skip=(t("ai_takeover", lang),))
         await self._deliver(reply_to, bot, reply, log_client=False)
 
     async def watch_waits(self, bot: Bot, every: float = 5.0) -> None:
@@ -1432,7 +1442,87 @@ class TelegramSupportBot:
         await message.answer(f"Кандидат #{c.id} отклонён.")
 
     def reload_knowledge(self) -> None:
-        self.engine.set_system_prompt(build_system_prompt(load_knowledge(self.settings, self.handoffs)))
+        self._cases_version = self.cases.version()
+        kb = load_knowledge(self.settings, self.handoffs, self.cases)
+        self.engine.set_system_prompt(build_system_prompt(kb), reply_schema(kb))
+        self.engine.set_always_escalate(always_escalate(kb))
+
+    # --- answering with the whole session in mind ----------------------------------------------
+
+    async def _handle(self, bot: Bot, msg: IncomingMessage, pending: bool = False, skip: tuple[str, ...] = ()) -> BotReply:
+        """The engine's answer, by the latest cases from the panel and with everything said in this session."""
+        if self.cases.version() != self._cases_version:
+            # An admin added or changed a case in the panel (another process).
+            self.reload_knowledge()
+        history = await self.session_history(bot, msg.user_id, pending, skip)
+        return await self.engine.handle(msg, history)
+
+    async def session_history(self, bot: Bot, client_id: str, pending: bool = False,
+                              skip: tuple[str, ...] = ()) -> list[Turn] | None:
+        """Every message of the client's open session from the chat log, oldest first: what the client wrote
+        (voice messages as text) with their photos, and what the bot and the operators answered.
+
+        None if the log has nothing for it (the engine then uses what it remembers). `pending`: drop the
+        client's latest messages that still wait for an answer (and the bot's `skip` texts after them).
+        """
+        conversation = self.feedback.conversation(CHANNEL, client_id)
+        if conversation is None:
+            return None
+        try:
+            logged = [m for m in self.chatlog.for_conversation(conversation.id) if m.sender != LOG_SYSTEM]
+        except Exception as e:  # noqa: BLE001 - the answer matters more than its context
+            log.warning("session history not read: %s", e)
+            return None
+        if pending:
+            while logged and (logged[-1].sender == LOG_CLIENT or logged[-1].text in skip):
+                logged.pop()
+        if not logged:
+            return None
+        logged = logged[-2 * max(1, self.settings.history_turns):]
+        # Only the latest images are resent to the model: download just those.
+        left, wanted = self.settings.history_images, set()
+        for m in reversed(logged):
+            if m.sender == LOG_CLIENT and m.kind in ("photo", "document"):
+                for file_id in reversed(m.files):
+                    if left > 0:
+                        wanted.add(file_id)
+                        left -= 1
+        turns = []
+        placeholders = set(MEDIA_PLACEHOLDER.values())
+        for m in logged:
+            if m.sender != LOG_CLIENT:
+                turns.append(Turn("assistant", m.text))
+                continue
+            images, older = [], False
+            if m.kind in ("photo", "document"):
+                for file_id in m.files:
+                    if file_id not in wanted:
+                        older = older or m.kind == "photo"
+                        continue
+                    img = await self._history_image(bot, file_id)
+                    if img is not None:
+                        images.append(img)
+            text = "" if m.text in placeholders else m.text
+            if older:
+                text = f"{text}\n[клиент присылал изображение раньше в этом разговоре]".strip()
+            elif m.kind == "photo" and not images:
+                text = f"{text}\n[клиент прислал изображение]".strip()
+            turns.append(Turn("user", text, images))
+        return turns
+
+    async def _history_image(self, bot: Bot, file_id: str) -> Image | None:
+        if file_id in self._history_images:
+            self._history_images.move_to_end(file_id)
+            return self._history_images[file_id]
+        try:
+            img = prepare_image(await self._download(bot, file_id))
+        except Exception as e:  # noqa: BLE001 - gone or too large: the text of the message still counts
+            log.info("session image %s not downloaded: %s", file_id, e)
+            return None
+        self._history_images[file_id] = img
+        while len(self._history_images) > 64:
+            self._history_images.popitem(last=False)
+        return img
 
     @staticmethod
     async def _download(bot: Bot, obj) -> bytes:
@@ -1520,11 +1610,12 @@ async def main() -> None:
     chatlog = ChatLog(settings.db_path)
     operators = OperatorStore(settings.db_path)
     guides = GuideStore(settings.db_path)
+    cases = CaseStore(settings.db_path)
     # Staff hear about clients from the admin bot, so their traffic stays off this bot.
     staff = (StaffNotifier(telegram_call(settings.admin_bot_token), operators, settings.admin_ids)
              if settings.admin_bot_token else None)
-    support = TelegramSupportBot(settings, build_engine(settings, handoffs), users, handoffs, feedback, chatlog,
-                                 operators=operators, guides=guides, staff=staff)
+    support = TelegramSupportBot(settings, build_engine(settings, handoffs, cases), users, handoffs, feedback, chatlog,
+                                 operators=operators, guides=guides, staff=staff, cases=cases)
     dp.include_router(support.router)
     try:
         await set_commands(bot, settings.support_chat_id)

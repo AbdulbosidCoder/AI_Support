@@ -21,8 +21,9 @@ class FakeLLM:
         self.calls = []
         self.system_prompts = []
 
-    def set_system_prompt(self, system_prompt):
+    def set_system_prompt(self, system_prompt, schema=None):
         self.system_prompts.append(system_prompt)
+        self.schemas = getattr(self, "schemas", []) + [schema]
 
     async def answer(self, history, text, images, note=""):
         self.calls.append((list(history), text, list(images), note))

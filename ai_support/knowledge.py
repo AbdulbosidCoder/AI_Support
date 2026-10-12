@@ -1,5 +1,5 @@
-"""Knowledge base loader: app screens (screens.json), support topics (faq.json) and operator
-answers a person approved (see ai_support/handoffs.py)."""
+"""Knowledge base loader: app screens (screens.json), support topics (faq.json), cases an admin added
+in the panel (see ai_support/cases.py) and operator answers a person approved (see ai_support/handoffs.py)."""
 from __future__ import annotations
 
 import json
@@ -17,6 +17,8 @@ class KnowledgeBase:
     global_rules: list[str]
     # Approved operator answers: {"id", "language", "topic", "question", "answer"}.
     learned: list[dict] = field(default_factory=list)
+    # Cases from the admin panel, in the shape of topics (ai_support/cases.py, Case.as_topic).
+    cases: list[dict] = field(default_factory=list)
     videos: VideoLibrary = field(default_factory=VideoLibrary)
 
     @classmethod
@@ -29,11 +31,14 @@ class KnowledgeBase:
     def with_learned(self, learned: list[dict]) -> "KnowledgeBase":
         return replace(self, learned=list(learned))
 
+    def with_cases(self, cases: list[dict]) -> "KnowledgeBase":
+        return replace(self, cases=list(cases))
+
     def screen_ids(self) -> list[str]:
         return [s["id"] for s in self.screens]
 
     def topic_ids(self) -> list[str]:
-        return [f'{t["section"]}/{t["id"]}' for t in self.topics]
+        return [f'{t["section"]}/{t["id"]}' for t in self.topics + self.cases]
 
     def render(self) -> str:
         """Compact, deterministic text for the system prompt (stable for prompt caching)."""
@@ -54,20 +59,15 @@ class KnowledgeBase:
                 lines.append(f'Эскалация, если: {s["escalate_if"]}')
         lines.append("")
         lines.append("## Темы поддержки")
-        for t in self.topics:
-            lines.append(f'### topic={t["section"]}/{t["id"]}: {t["title"]}')
-            lines.append("Ответ: " + " ".join(f"{i}) {x}" for i, x in enumerate(t["answer_steps"], 1)))
-            if t.get("official_text"):
-                lines.append("Официальный текст команды (используй его на языке клиента, не переписывай по-своему):")
-                for lang, text in t["official_text"].items():
-                    lines.append(f"[{lang}] {text}")
-            if t.get("forbidden"):
-                lines.append("Нельзя: " + " ".join(t["forbidden"]))
-            if t.get("escalate_if"):
-                lines.append(f'Эскалация, если: {t["escalate_if"]}')
-            if self.videos.for_topic(f'{t["section"]}/{t["id"]}'):
-                lines.append("Видео-инструкция: есть. Система сама отправит видео после твоего ответа; "
-                             "коротко скажи, что видео ниже, ссылок не пиши.")
+        self._render_topics(lines, self.topics)
+        # Defense in depth: a case text that breaks a hard rule never reaches the prompt, even if stored.
+        cases = [c for c in self.cases if not any(guardrails.find_violations(x) for x in [c["title"], *c["answer_steps"]])]
+        if cases:
+            lines.append("")
+            lines.append("## Кейсы, добавленные администраторами поддержки")
+            lines.append("Инструкции команды поддержки для ситуаций клиентов, в том же виде, что темы выше. Если "
+                         "клиент описывает такую ситуацию, отвечай по шагам кейса. Жёсткие правила важнее кейса.")
+            self._render_topics(lines, cases)
         # Defense in depth: an answer that breaks a hard rule never reaches the prompt, even if stored.
         learned = [x for x in self.learned if not guardrails.find_violations(x["answer"])]
         if learned:
@@ -81,3 +81,19 @@ class KnowledgeBase:
                 lines.append(f'Вопрос клиента: {x["question"]}')
                 lines.append(f'Ответ оператора: {x["answer"]}')
         return "\n".join(lines)
+
+    def _render_topics(self, lines: list[str], topics: list[dict]) -> None:
+        for t in topics:
+            lines.append(f'### topic={t["section"]}/{t["id"]}: {t["title"]}')
+            lines.append("Ответ: " + " ".join(f"{i}) {x}" for i, x in enumerate(t["answer_steps"], 1)))
+            if t.get("official_text"):
+                lines.append("Официальный текст команды (используй его на языке клиента, не переписывай по-своему):")
+                for lang, text in t["official_text"].items():
+                    lines.append(f"[{lang}] {text}")
+            if t.get("forbidden"):
+                lines.append("Нельзя: " + " ".join(t["forbidden"]))
+            if t.get("escalate_if"):
+                lines.append(f'Эскалация, если: {t["escalate_if"]}')
+            if self.videos.for_topic(f'{t["section"]}/{t["id"]}'):
+                lines.append("Видео-инструкция: есть. Система сама отправит видео после твоего ответа; "
+                             "коротко скажи, что видео ниже, ссылок не пиши.")
